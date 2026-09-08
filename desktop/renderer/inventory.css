@@ -1,0 +1,249 @@
+/* audience: internal
+# inventory-styles
+个人内容采用分节聚合列表, 官方来源与技术详情分别收纳.
+*/
+
+/* //// 排列入口, 导航和按需详情 [@x380kkm 2026-09-07] //// */
+.startup-message { max-width: 700px; margin: 12vh auto; padding: 36px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.startup-message p { margin-top: 18px; line-height: 1.8; }
+#startup-error { color: var(--danger); }
+.inventory-layout, .inventory-layout.has-inspector { grid-template-columns: var(--navigation-width) minmax(330px, 1fr); }
+.inventory-layout.has-inspector > .main-panel { display: none; }
+#inventory-inspector { border-left: 0; }
+#inventory-inspector > .inventory-section, #inventory-inspector > .inspector-heading { padding-left: max(28px, calc((100% - 920px) / 2)); padding-right: max(28px, calc((100% - 920px) / 2)); }
+.inventory-layout .main-panel { padding: 26px var(--content-gutter) 0; }
+.inventory-layout .content-heading { flex-direction: row; }
+.inventory-layout .sidebar { overflow-y: auto; }
+.navigation-section-title { display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 500; color: var(--muted); padding: 22px 12px 9px; margin: 0; }
+.navigation-section-title::after { content: ''; height: 1px; background: var(--border); flex: 1; }
+.navigation-section-title:first-child { padding-top: 3px; }
+.inventory-scope { padding: 20px 12px 0; border-top: 1px solid var(--border); margin-top: auto; font-size: 11px; color: var(--muted); }
+.inventory-scope summary { cursor: pointer; }
+.inventory-scope p { margin-top: 10px; line-height: 1.7; overflow-wrap: anywhere; }
+.inventory-layout .sidebar-footer { margin-top: 0; }
+.inventory-layout .content-toolbar { margin: 18px 0; padding: 16px 0 0; border-top: 1px solid var(--border); }
+.inventory-layout .content-heading .button-group { padding-top: 5px; }
+.inventory-scope-label { font-size: 11px; color: var(--muted); margin-bottom: 10px; line-height: 1.5; }
+#inventory-search { flex: 1; min-width: 130px; max-width: 520px; }
+.inventory-result-count { font-size: 11px; color: var(--muted); margin: 9px 0 12px; min-height: 12px; }
+.inventory-result-count:empty { display: none; }
+.inventory-list-view { flex: 1; min-height: 100px; overflow: auto; padding: 1px 7px 22px 1px; scrollbar-gutter: stable; }
+.inventory-category { margin-bottom: 24px; }
+.inventory-category-heading { font-size: 12px; font-weight: 600; color: var(--muted); margin: 10px 0; }
+.inventory-group { border: 1px solid var(--border); border-bottom-width: 0; background: var(--surface); }
+.inventory-group:last-child { border-bottom-width: 1px; border-radius: 0 0 6px 6px; }
+.inventory-category-heading + .inventory-group, .inventory-group:first-child { border-radius: 6px 6px 0 0; }
+.inventory-group:only-child { border-radius: 6px; }
+.inventory-group.selected > .inventory-group-heading { background: var(--selected); }
+.inventory-group-heading { display: grid; grid-template-columns: 30px minmax(130px, 1fr) minmax(120px, auto) 76px; align-items: center; gap: 12px; padding: 11px 14px 11px 6px; min-height: 51px; }
+.inventory-group-heading:hover { background: var(--hover); }
+button.inventory-expand { border: 0; background: transparent; padding: 3px; font-size: 21px; color: var(--muted); }
+button.inventory-expand:disabled { visibility: hidden; }
+button.inventory-group-name { display: flex; align-items: center; gap: 10px; border: 0; background: transparent; padding: 4px 0; text-align: left; font-weight: 600; white-space: normal; overflow-wrap: anywhere; }
+.inventory-group-summary { font-size: 11px; color: var(--muted); text-align: right; line-height: 1.6; }
+.inventory-group-status { font-size: 11px; color: var(--muted); text-align: right; }
+.inventory-group-members { padding: 2px 14px 12px 42px; border-top: 1px solid var(--border); }
+button.inventory-member { width: 100%; display: grid; grid-template-columns: 65px minmax(0, 1fr); align-items: baseline; gap: 12px; border: 0; border-radius: 3px; background: transparent; text-align: left; white-space: normal; font-size: 12px; padding: 8px; }
+.inventory-member[aria-pressed="true"] { background: var(--selected); }
+.inventory-member.matched { box-shadow: inset 2px 0 var(--accent); }
+.inventory-member-kind { color: var(--muted); font-size: 10px; font-weight: 400; }
+.inventory-empty { margin: 26px 0; color: var(--muted); font-size: 12px; }
+.inventory-official { border: 1px solid var(--border); border-radius: 3px; background: var(--raised); flex-shrink: 0; margin: 0 7px 10px 0; overflow: auto; max-height: 44%; }
+.inventory-official > summary { cursor: pointer; padding: 11px 14px; font-size: 12px; color: var(--muted); position: sticky; top: 0; background: var(--raised); z-index: 1; }
+#inventory-official-count { float: right; font-size: 11px; }
+#inventory-official-list { padding: 0 12px; }
+#inventory-official-list .inventory-category { margin-bottom: 12px; }
+.inventory-diagnostic { margin-top: 10px; }
+.inventory-diagnostic code { display: block; font-size: 10px; overflow-wrap: anywhere; }
+.inventory-layout .diagnostics { flex-shrink: 0; max-height: 25%; overflow: auto; }
+.inventory-layout .diagnostics > summary { cursor: pointer; }
+/* //// /排列入口, 导航和按需详情 //// */
+
+/* //// 呈现具备用途图标与明确操作的卡片 [@x380kkm 2026-09-07] //// */
+.tool-icon { flex-shrink: 0; vertical-align: middle; --icon-ink: var(--ink); --icon-paper: var(--raised); }
+.tool-icon > rect { fill: var(--icon-paper); rx: 3px; }
+.tool-icon > g { stroke: var(--icon-ink); }
+.tool-icon circle { fill: var(--icon-paper); }
+.inventory-view-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.inventory-filter { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.inventory-filter input { width: 14px; height: 14px; }
+.inventory-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 13px; padding-bottom: 4px; }
+.inventory-card { --card-ink: var(--ink); position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 104px; padding: 17px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 1px 0 #1d271008; transition: border-color 110ms, box-shadow 110ms; cursor: pointer; }
+.inventory-card::before { content: ''; position: absolute; width: 24px; height: 2px; background: var(--card-ink); left: 18px; top: -1px; }
+.inventory-card[data-kind="rule"] { --card-ink: var(--rule); }
+.inventory-card[data-kind="skill"] { --card-ink: var(--skill); }
+.inventory-card[data-kind="hook"] { --card-ink: var(--hook); }
+.inventory-card[data-kind="tool"] { --card-ink: var(--tool); }
+.inventory-card[data-kind="module"] { border-top: 2px solid var(--ink); }
+.inventory-card[data-kind="module"]::before { display: none; }
+.inventory-card:hover, .inventory-card:focus-within { border-color: var(--selected-border); box-shadow: 0 3px 9px #1d27100c; }
+.inventory-card.selected { border-color: var(--accent); background: var(--selected); }
+.inventory-card-header { display: flex; align-items: flex-start; gap: 12px; min-height: 44px; }
+.inventory-card-header .tool-icon { width: 38px; height: 38px; --icon-ink: var(--card-ink); --icon-paper: transparent; }
+.inventory-card-header > div { min-width: 0; }
+.card-chevron { flex-shrink: 0; width: 6px; height: 6px; border-top: 1px solid var(--muted); border-right: 1px solid var(--muted); transform: rotate(45deg); margin: 7px 2px 0 auto; opacity: .5; }
+.inventory-card:hover .card-chevron, .inventory-card:focus-within .card-chevron { border-color: var(--accent); opacity: 1; }
+.inventory-card-kind { display: block; font-size: 11px; color: var(--card-ink); margin-top: 5px; line-height: 1.3; }
+button.inventory-card-name { border: 0; background: transparent; padding: 0; text-align: left; white-space: normal; overflow-wrap: anywhere; font-size: 16px; line-height: 1.4; font-weight: 600; }
+.inventory-card-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; margin-top: auto; padding-top: 12px; gap: 8px; }
+.inventory-card-footer > select { background: var(--raised); font-size: 11px; padding: 6px 8px; min-width: 112px; }
+.card-source-warning { font-size: 11px; color: var(--danger); margin-top: 10px; }
+.card-controls { display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }
+.card-controls select { min-width: 114px; max-width: 100%; color: var(--text); background: var(--raised); }
+.card-controls-readonly { align-items: center; min-height: 28px; }
+.card-state-label { font-size: 11px; line-height: 1.6; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.card-state-label::before { content: ''; width: 5px; height: 5px; border: 1px solid currentColor; border-radius: 50%; }
+.card-controls button, .card-controls select { font-size: 11px; }
+.card-module-uses { width: 100%; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.card-shared { width: 100%; display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+.card-shared input { width: 14px; height: 14px; }
+.inventory-scope-hint { color: var(--muted); font-size: 11px; margin: 14px 0 0; line-height: 1.65; display: flex; align-items: center; gap: 7px; }
+.inventory-scope-hint::before { content: ''; flex-shrink: 0; width: 6px; height: 6px; border: 1px solid var(--muted); border-radius: 50%; }
+.inventory-scope-hint[data-state="on"]::before { background: var(--success); border-color: var(--success); }
+.disabled-card { opacity: .65; }
+/* //// /呈现具备用途图标与明确操作的卡片 //// */
+
+/* //// 将原文和配置详情收纳在内容成员中 [@x380kkm 2026-09-07] //// */
+#inventory-inspector .inspector-heading { position: sticky; top: 0; background: var(--surface); z-index: 1; padding-top: 24px; padding-bottom: 22px; border-bottom: 1px solid var(--border); }
+#inventory-inspector .inspector-heading h2 { font-family: var(--display-font); font-size: 26px; font-weight: 600; letter-spacing: -.025em; }
+#inventory-inspector .inspector-heading > .text-button:first-child { float: right; }
+.inspector-identity { display: flex; align-items: flex-start; gap: 17px; padding-right: 24px; }
+.inspector-identity > .tool-icon { width: 42px; height: 42px; margin-top: 3px; }
+.inspector-labels { min-width: 0; }
+.inventory-breadcrumb { margin: 0 30px 10px -7px; display: block; max-width: 90%; overflow: hidden; text-overflow: ellipsis; }
+.inventory-section { padding: 22px; border-bottom: 1px solid var(--border); }
+.inventory-section h3 { font-size: 12px; margin-bottom: 12px; }
+.inventory-section p { font-size: 12px; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
+.inventory-section pre { padding: 12px; border: 1px solid var(--border); border-radius: 5px; background: var(--raised); max-height: 450px; overflow: auto; }
+.inventory-disclosure { margin: 10px 0; }
+.inventory-disclosure > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.inventory-disclosure[open] > summary { margin-bottom: 12px; }
+.inventory-registration { margin-top: 12px; }
+.inventory-registration .inventory-disclosure > summary { font-size: 11px; }
+.inventory-member-links { display: grid; gap: 6px; }
+.inventory-member-links button { white-space: normal; text-align: left; font-size: 12px; line-height: 1.5; }
+.inventory-member-link { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; }
+.inventory-member-link span { overflow-wrap: anywhere; }
+.inventory-evidence { display: grid; grid-template-columns: 65px minmax(0, 1fr); gap: 10px; font-size: 11px; line-height: 1.6; margin: 0; }
+.inventory-evidence dt { color: var(--muted); }
+.inventory-evidence dd { margin: 0; overflow-wrap: anywhere; }
+.inventory-small { color: var(--muted); font-size: 11px; }
+/* //// /将原文和配置详情收纳在内容成员中 //// */
+
+/* //// 呈现完整正文与规则编辑 [@x380kkm 2026-09-07] //// */
+.card-hint { font-size: 12px; color: var(--muted); line-height: 1.7; margin: 10px 0; overflow-wrap: anywhere; }
+.markdown-content { font-size: 14px; line-height: 1.85; overflow-x: auto; overflow-wrap: anywhere; max-width: 84ch; }
+.markdown-content p, .inventory-section .markdown-content p { margin: 8px 0 12px; color: var(--text); font-size: inherit; }
+.markdown-content ul, .markdown-content ol { padding-left: 22px; margin: 10px 0; }
+.markdown-content li + li { margin-top: 8px; }
+.markdown-content code { font-size: .9em; background: var(--raised); border-radius: 3px; padding: 1px 4px; }
+.markdown-content table { border-collapse: collapse; width: 100%; font-size: 12px; margin: 12px 0; }
+.markdown-content th, .markdown-content td { border: 1px solid var(--border); padding: 8px; vertical-align: top; text-align: left; min-width: 95px; }
+.markdown-content th { background: var(--raised); }
+.markdown-content > :first-child { margin-top: 0; }
+.markdown-content h2 { font-size: 18px; margin: 28px 0 12px; }
+.markdown-content h3 { font-size: 15px; margin: 22px 0 10px; }
+.rule-dialog { width: min(1040px, calc(100vw - 60px)); max-height: calc(100vh - 50px); }
+.rule-dialog[open] { display: flex; flex-direction: column; }
+.rule-dialog .dialog-heading, .rule-dialog .dialog-actions { flex-shrink: 0; }
+.rule-editor-fields { padding: 20px; overflow-y: auto; display: flex; flex-direction: column; align-items: stretch; gap: 15px; }
+.rule-editor-field { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.rule-editor-field textarea { resize: vertical; min-height: 140px; font: inherit; line-height: 1.7; padding: 10px; }
+.rule-editor-feedback { margin: 0; max-height: 110px; overflow: auto; padding: 10px 24px; font-size: 11px; white-space: pre-wrap; }
+.rule-editor-feedback:empty { display: none; }
+.rule-editor-body { display: grid; grid-template-columns: 1fr 1fr; min-height: 280px; height: 58vh; }
+.rule-editor-preview { padding: 24px; overflow-y: auto; border-left: 1px solid var(--border); }
+/* //// /呈现完整正文与规则编辑 //// */
+
+/* //// 呈现组合编辑与接管操作 [@x380kkm 2026-09-07] //// */
+.module-editor-dialog, .host-settings-dialog { width: min(980px, calc(100vw - 50px)); max-height: calc(100vh - 50px); }
+.module-editor-dialog[open], .host-settings-dialog[open] { display: flex; flex-direction: column; }
+.module-editor-dialog .dialog-heading, .host-settings-dialog .dialog-heading, .module-editor-dialog .dialog-actions, .host-settings-dialog .dialog-actions { flex-shrink: 0; }
+.dialog-heading h2 { font-family: var(--display-font); font-size: 21px; letter-spacing: -.025em; }
+.host-settings-dialog .dialog-actions { justify-content: flex-end; }
+.dialog-actions .button-group { display: flex; gap: 8px; }
+.module-metadata { display: grid; grid-template-columns: 1fr; gap: 10px; padding: 18px 24px; background: var(--raised); }
+.module-optional-note { font-size: 12px; color: var(--muted); }
+.module-optional-note > summary { cursor: pointer; }
+.module-optional-note textarea { display: block; width: 100%; margin-top: 9px; padding: 8px; resize: vertical; font: inherit; }
+.module-field { display: flex; flex-direction: column; font-size: 12px; gap: 8px; }
+.module-field textarea, .module-selected textarea { font: inherit; padding: 8px; resize: vertical; width: 100%; }
+.module-toolbar { display: flex; align-items: center; gap: 12px; padding: 0 24px 14px; }
+.module-toolbar > input { flex: 1; }
+.module-editor-body { display: grid; grid-template-columns: 1fr 1fr; height: 45vh; min-height: 180px; overflow: hidden; border-top: 1px solid var(--border); }
+.module-candidates, .module-selected-list { padding: 0 20px 16px; overflow-y: auto; }
+.module-selected-list { border-left: 1px solid var(--border); background: var(--raised); }
+.editor-column-heading { position: sticky; top: 0; padding: 16px 0 12px; font-size: 12px; color: var(--muted); font-weight: 600; background: var(--surface); z-index: 1; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.module-selected-list > .editor-column-heading { background: var(--raised); }
+.module-candidate { display: flex; align-items: flex-start; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.module-candidate input { margin-top: 4px; flex-shrink: 0; }
+.module-candidate > div { min-width: 0; flex: 1; }
+.module-candidate small { display: block; overflow-wrap: anywhere; margin: 4px 0 0; }
+.module-selected { border: 1px solid var(--border); border-radius: 3px; margin: 12px 0; padding: 14px; background: var(--surface); }
+.module-selected h3 { font-size: 12px; margin: 0 0 10px; }
+.module-selected .button-group { margin-top: 10px; }
+.module-member-row { padding: 16px 0; border-bottom: 1px solid var(--border); }
+.module-member-row h3 { margin-top: 12px; }
+.module-member-row button { margin-top: 12px; }
+.settings-feedback { padding: 0 24px; font-size: 12px; color: var(--muted); white-space: pre-wrap; }
+.settings-feedback:empty { display: none; }
+.host-settings-body { overflow-y: auto; padding: 0 24px; }
+.settings-section { padding: 20px 0; border-bottom: 1px solid var(--border); }
+.settings-section:empty { display: none; }
+.settings-section h3 { font-size: 15px; margin: 0 0 12px; }
+.settings-section pre { max-height: 300px; overflow: auto; white-space: pre-wrap; font-size: 11px; padding: 14px; background: var(--raised); }
+.host-toggle { display: flex; align-items: center; gap: 12px; font-size: 15px; font-weight: 600; margin: 18px 0 12px; }
+.host-toggle input { appearance: none; width: 36px; height: 20px; padding: 2px; background: var(--hover); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; }
+.host-toggle input::before { content: ''; display: block; width: 14px; height: 14px; background: var(--muted); border-radius: 1px; transition: transform 110ms; }
+.host-toggle input:checked { background: var(--ink); border-color: var(--ink); }
+.host-toggle input:checked::before { transform: translateX(16px); background: var(--on-ink); }
+.backup-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; gap: 16px; font-size: 12px; border-top: 1px solid var(--border); }
+.backup-row > div { white-space: pre-line; line-height: 1.8; min-width: 0; }
+.backup-row button { flex-shrink: 0; }
+.settings-section .backup-row:first-of-type { border-top: 2px solid var(--ink); }
+.host-sync-message { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-shrink: 0; margin: 0; padding: 9px 24px; background: var(--selected); border-bottom: 1px solid var(--selected-border); font-size: 12px; line-height: 1.6; max-height: 100px; overflow: auto; }
+.host-sync-message.sync-blocked { background: var(--warning-bg); border-color: var(--warning-border); color: var(--text); }
+.host-sync-message > button { flex-shrink: 0; }
+.hook-editor-dialog { width: min(820px, calc(100vw - 50px)); max-height: calc(100vh - 50px); }
+.hook-editor-dialog[open] { display: flex; flex-direction: column; }
+.hook-editor-body { padding: 20px 24px; display: grid; gap: 14px; overflow: auto; }
+.hook-editor-body textarea { width: 100%; min-height: 180px; resize: vertical; padding: 12px; font: 12px/1.7 Consolas, monospace; }
+/* //// /呈现组合编辑与接管操作 //// */
+
+/* //// 保持窄窗口的列表阅读空间 [@x380kkm 2026-09-07] //// */
+@media (max-width: 1200px) {
+  :root { --navigation-width: 184px; --content-gutter: 24px; }
+  .inventory-layout .content-toolbar { flex-wrap: wrap; gap: 10px; }
+  .inventory-layout #inventory-search { max-width: none; }
+}
+@media (max-width: 850px) {
+  .brand { width: auto; }
+  .brand strong { display: none; }
+  .app-header { gap: 16px; padding: 0 16px; }
+  .module-metadata { grid-template-columns: 1fr; gap: 12px; }
+  .module-toolbar { flex-wrap: wrap; }
+  .module-toolbar > input { min-width: 120px; }
+  .module-editor-body { grid-template-columns: 1fr; height: 47vh; overflow: auto; }
+  .module-candidates, .module-selected-list { overflow: visible; }
+  .module-selected-list { border-left: 0; border-top: 1px solid var(--border); }
+  .rule-editor-body { grid-template-columns: 1fr; overflow: auto; }
+  .rule-editor-preview { border-left: 0; border-top: 1px solid var(--border); }
+}
+@media (max-width: 700px) {
+  :root { --navigation-width: 130px; --content-gutter: 12px; }
+  .inventory-layout, .inventory-layout.has-inspector { grid-template-columns: 130px minmax(200px, 1fr); }
+  .inventory-layout .main-panel { padding: 16px 10px 0; }
+  .inventory-group-heading { grid-template-columns: 20px minmax(120px, 1fr) 70px; gap: 5px; padding-right: 8px; }
+  .inventory-group-summary { display: none; }
+  .brand { width: auto; }
+  .brand strong { display: none; }
+  .inventory-layout .kind-item { padding: 10px 5px; font-size: 11px; }
+  .inventory-cards { grid-template-columns: 1fr; }
+  .inventory-view-actions { flex-wrap: wrap; gap: 8px; }
+}
+/* //// /保持窄窗口的列表阅读空间 //// */
+
+/* //// 跟随用户的减少动态效果设置 [@x380kkm 2026-09-07] //// */
+@media (prefers-reduced-motion: reduce) {
+  button, .inventory-card, .host-toggle input::before { transition: none; }
+}

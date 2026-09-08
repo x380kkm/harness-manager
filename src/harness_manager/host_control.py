@@ -1,0 +1,293 @@
+# audience: internal
+# # host-control
+"""宿主预览固定编译结果和磁盘基线. 应用只接受当前服务生成的预览, 备份与恢复由宿主存储处理."""
+from __future__ import annotations
+
+import base64
+from difflib import unified_diff
+import tomllib
+from uuid import NAMESPACE_URL, uuid4, uuid5
+
+from .host_projection import compile_host
+from .host_storage import HostStorage
+from .host_ownership import reconcile, decode_file, encode_file
+from .host_instructions import compose_instructions
+from .host_sources import HostSourceReader, verify_source_reads
+from .storage_errors import StorageConflictError, StorageValidationError, StorageError
+
+
+# //// 汇总文件差异并限定正文展示范围 [@x380kkm 2026-09-07] ////
+def file_preview(targets: dict, baseline: dict) -> list[dict]:
+    files = []
+    for name, after in targets.items():
+        encoded = baseline["files"].get(name)
+        before = base64.b64decode(encoded) if encoded is not None else None
+        if before == after:
+            continue
+        record = {"name": name, "operation": "移出" if after is None else "创建" if before is None else "替换",
+                  "beforeBytes": len(before) if before else 0, "afterBytes": len(after) if after else 0}
+        if name in {"AGENTS.md", "AGENTS.override.md"}:
+            record["diff"] = "\n".join(unified_diff((before or b"").decode("utf-8-sig", errors="replace").splitlines(),
+                                                       (after or b"").decode("utf-8-sig", errors="replace").splitlines(), n=2))
+        else:
+            record["diff"] = "配置文件按选中版本替换. 完整字节保存在本机备份中."
+        files.append(record)
+    return files
+
+
+# //// 管理接管开关和带备份的宿主应用入口 [@x380kkm 2026-09-07] ////
+class HostControl:
+    def __init__(self, catalogs, codex, reader) -> None:
+        self.catalogs, self.codex, self.reader = catalogs, codex, reader
+        self.previews = {}
+
+    # //// 将用户或选定项目映射到固定宿主目录 [@x380kkm 2026-09-07] ////
+    def storage(self, scope: str) -> HostStorage:
+        self.catalogs.select(scope)
+        if scope == "user":
+            return HostStorage(self.catalogs.user.workspace, self.codex.root, "codex-user")
+        root = self.catalogs.project.workspace
+        return HostStorage(self.catalogs.user.workspace, root, "codex-" + uuid5(NAMESPACE_URL, root.as_uri()).hex, config_subdir=".codex")
+
+    # //// 返回接管状态和可选择的恢复记录 [@x380kkm 2026-09-07] ////
+    def status(self, scope: str = "user") -> dict:
+        storage = self.storage(scope)
+        return {**storage.status(), "scope": scope, "targetRoot": str(storage.target_root),
+                "backupRoot": str(storage.store.directory), "previewRequired": True}
+
+    # //// 固定首次使用前的宿主配置恢复点 [@x380kkm 2026-09-07] ////
+    def initialize(self, scope: str = "user") -> dict:
+        self.storage(scope).initialize()
+        return self.status(scope)
+
+    # //// 合并进程授权与宿主已发现的来源目录 [@x380kkm 2026-09-08] ////
+    def source_reader(self) -> HostSourceReader:
+        directories = [self.catalogs.user.workspace / ".agents/skills", self.codex.root / "skills", self.codex.root / "plugins/cache"]
+        roots = [*self.reader.roots, *(path for path in directories if path.is_dir() and not path.is_symlink() and not path.is_junction())]
+        return HostSourceReader(self.reader.workspace, roots)
+
+    # //// 编译宿主配置并保存其实际来源观察 [@x380kkm 2026-09-08] ////
+    def compile(self, scope: str) -> dict:
+        reader = self.source_reader()
+        global_inputs = self.storage("user").capture_instructions(["AGENTS.override.md", "AGENTS.md"]) if scope != "user" else None
+        options = {"global_texts": {str(self.codex.root / name): (decode_file(value) or b"").decode("utf-8-sig")
+                                    for name, value in global_inputs.items()}} if global_inputs is not None else {}
+        compiled = compile_host(self.catalogs, self.codex, reader, scope, **options)
+        compiled["sourceReads"] = reader.observations
+        if global_inputs is not None:
+            compiled["globalInstructionReads"] = global_inputs
+        if "instructions" in compiled:
+            storage = self.storage(scope)
+            previous = storage.read_ownership().get("AGENTS.override.md")
+            try:
+                name, content, inputs, configurations = self.instruction_source(scope, storage, previous)
+                rendered, source = compose_instructions(compiled["instructions"], content, storage.target_root / name,
+                                                        previous.get("source") if previous else None)
+                compiled["targets"]["AGENTS.override.md"] = rendered
+                compiled.update(instructionReads=inputs, instructionSource=source, configurationReads=configurations)
+            except (StorageError, ValueError, OSError) as error:
+                compiled["targets"] = {}
+                compiled["diagnostics"].append({"severity": "error", "code": "host_instruction_source",
+                                                "subject": "AGENTS.override.md", "message": str(error)})
+        return compiled
+
+    # //// 选择覆盖前的实际说明来源并保存读取基线 [@x380kkm 2026-09-08] ////
+    def instruction_source(self, scope: str, storage: HostStorage, previous: dict | None) -> tuple:
+        names = ["AGENTS.override.md", "AGENTS.md"]
+        configurations = {}
+        if scope != "user":
+            configurations = {"user": self.storage("user").capture_configuration(), scope: storage.capture_configuration()}
+            fallbacks = []
+            for files in configurations.values():
+                config = tomllib.loads((decode_file(files["config.toml"]) or b"").decode("utf-8-sig"))
+                fallbacks = config.get("project_doc_fallback_filenames", fallbacks)
+            if not isinstance(fallbacks, list) or any(not isinstance(name, str) for name in fallbacks):
+                raise StorageValidationError("说明候选文件需要文件名数组.")
+            names.extend(name for name in fallbacks if name not in names)
+        inputs = storage.capture_instructions(names)
+        candidates = dict(inputs)
+        if previous is not None:
+            candidates["AGENTS.override.md"] = previous["before"]
+        for name in names:
+            content = decode_file(candidates[name])
+            if content and content.decode("utf-8-sig").strip():
+                return name, content, inputs, configurations
+        return "AGENTS.md", decode_file(candidates["AGENTS.md"]), inputs, configurations
+
+    # //// 在提交边界核对编译正文及其说明和配置输入 [@x380kkm 2026-09-08] ////
+    def verify_compilation_inputs(self, inputs: dict, written: dict | None = None) -> None:
+        written = written or {}
+        applying_scope = inputs.get("scope", "user")
+        storage = self.storage(applying_scope)
+        written_paths = {storage._target(name): content for name, content in written.items()}
+        verify_source_reads(self.source_reader(), inputs.get("sourceReads", []), written_paths)
+        for scope, files in inputs.get("configurationReads", {}).items():
+            expected = dict(files)
+            if scope == applying_scope and "config.toml" in written:
+                expected["config.toml"] = encode_file(written["config.toml"])
+            if self.storage(scope).capture_configuration() != expected:
+                raise StorageConflictError("host-instruction-config")
+        global_inputs = inputs.get("globalInstructionReads", {})
+        expected_global = {name: encode_file(written[name]) if applying_scope == "user" and name in written else value
+                           for name, value in global_inputs.items()}
+        if global_inputs and self.storage("user").capture_instructions(list(global_inputs)) != expected_global:
+            raise StorageConflictError("host-global-instruction-source")
+
+    # //// 返回已保存的接管状态与宿主应用结果 [@x380kkm 2026-09-08] ////
+    def set_enabled(self, enabled: bool, scope: str = "user", baseline: dict | None = None) -> dict:
+        self.storage(scope).enable(enabled, baseline)
+        result = self.synchronize_active_scopes(scope) if enabled else {"status": "disabled", "message": "接管已关闭, 宿主继续沿用已应用设置."}
+        return {**self.status(scope), "hostSync": result}
+
+    # //// 汇总宿主应用失败的范围和原因 [@x380kkm 2026-09-08] ////
+    @staticmethod
+    def _synchronization_failure(scope: str, error: Exception) -> dict:
+        return {"status": "blocked", "message": f"配置已保存, {scope} 宿主文件应用失败.",
+                "diagnostics": [{"scope": scope, "code": getattr(error, "code", "host_write"), "message": str(error)}]}
+
+    # //// 同步保存范围及当前已接管项目的继承配置 [@x380kkm 2026-09-08] ////
+    def synchronize_active_scopes(self, scope: str = "user") -> dict:
+        try:
+            result = self.synchronize(scope)
+        except (StorageError, ValueError, OSError) as error:
+            return self._synchronization_failure(scope, error)
+        if scope != "user" or result["status"] not in {"applied", "unchanged"} or self.catalogs.project is None:
+            return result
+        project_scope = "project-local"
+        try:
+            status = self.storage(project_scope).status()
+            if not status["initialized"] or not status["enabled"]:
+                return result
+            project = self.synchronize(project_scope)
+        except (StorageError, ValueError, OSError) as error:
+            project = self._synchronization_failure(project_scope, error)
+        combined = {**result, "scopes": {scope: result, project_scope: project}}
+        if project["status"] == "blocked":
+            combined.update(status="blocked", message="用户设置已应用, 当前项目 (project-local) 的宿主应用需要处理以下问题.",
+                            diagnostics=[{**note, "scope": project_scope} for note in project.get("diagnostics", [])])
+        elif project["status"] == "applied":
+            combined.update(status="applied", message="用户设置与当前项目的宿主文件已同步.")
+            combined.setdefault("backupId", project["backupId"])
+        elif project["status"] == "disabled":
+            combined["message"] = "用户设置已应用. 当前项目接管已关闭, 项目宿主文件保持原样."
+        return combined
+
+    # //// 根据接管状态应用已保存的静态配置 [@x380kkm 2026-09-07] ////
+    def synchronize(self, scope: str = "user") -> dict:
+        if not self.storage(scope).status()["enabled"]:
+            return {"status": "disabled", "message": "配置已保存. 接管已关闭, 宿主继续沿用上次应用的设置."}
+        preview = self.preview(scope)
+        if preview["planId"] is None:
+            return {"status": "blocked", "message": "配置已保存, 宿主应用需要处理载体或范围问题.", "diagnostics": preview["diagnostics"]}
+        prepared = self.previews[preview["planId"]]
+        if not preview["files"] and prepared["ownership"] == prepared["previousOwnership"]:
+            self.previews.pop(preview["planId"], None)
+            return {"status": "unchanged", "message": "配置已保存, 宿主文件没有变化."}
+        result = self.apply(preview["planId"])
+        return {"status": "applied", "message": "配置已应用到宿主文件. 首次原配置恢复点保持不变.", "backupId": result["backupId"]}
+
+    # //// 保存有界预览并返回仅含阅读信息的令牌 [@x380kkm 2026-09-07] ////
+    def _remember(self, scope: str, targets: dict, baseline: dict, *, backup_id: str | None = None, contributions=None) -> dict:
+        while len(self.previews) >= 4:
+            self.previews.pop(next(iter(self.previews)))
+        identity = uuid4().hex
+        self.previews[identity] = {"scope": scope, "targets": targets, "baseline": baseline, "backupId": backup_id}
+        return {"planId": identity, "scope": scope, "files": file_preview(targets, baseline),
+                "backupId": backup_id, "contributions": contributions or [], "diagnostics": []}
+
+    # //// 编译有效配置并准备文件基线和字段归属 [@x380kkm 2026-09-08] ////
+    def _prepare_application(self, scope: str) -> tuple[dict, dict | None]:
+        compiled = self.compile(scope)
+        if any(note.get("severity") == "error" for note in compiled["diagnostics"]):
+            return compiled, None
+        storage = self.storage(scope)
+        ownership = storage.read_ownership()
+        capture_targets = dict(compiled["targets"])
+        if "AGENTS.override.md" in ownership:
+            capture_targets.setdefault("AGENTS.override.md", None)
+        if "skills" in ownership:
+            capture_targets.setdefault("config.toml", None)
+        if "hooks" in ownership:
+            capture_targets.setdefault("hooks.json", None)
+        baseline = storage.capture(capture_targets)
+        self.verify_compilation_inputs(compiled)
+        if ownership != storage.read_ownership():
+            raise StorageConflictError("host-ownership")
+        config_root = storage.target_root / storage.config_subdir
+        targets, updated = reconcile(compiled["targets"], compiled["contributions"], baseline["files"], ownership, config_root)
+        if "instructionSource" in compiled:
+            if storage.capture_instructions(list(compiled["instructionReads"])) != compiled["instructionReads"]:
+                raise StorageConflictError("host-instruction-source")
+            updated["AGENTS.override.md"]["source"] = compiled["instructionSource"]
+            baseline["instructionReads"] = compiled["instructionReads"]
+        baseline["files"] = {name: baseline["files"][name] for name in targets}
+        plan = {"scope": scope, "targets": targets, "baseline": baseline, "backupId": None,
+                "compiledTargets": compiled["targets"], "compiledContributions": compiled["contributions"],
+                "instructionSource": compiled.get("instructionSource"), "ownership": updated, "previousOwnership": ownership,
+                "configurationReads": compiled.get("configurationReads", {}),
+                "globalInstructionReads": compiled.get("globalInstructionReads", {}), "sourceReads": compiled.get("sourceReads", [])}
+        return compiled, plan
+
+    # //// 只读检查宿主文件及归属与当前声明的差异 [@x380kkm 2026-09-08] ////
+    def inspect(self, scope: str = "user") -> dict:
+        result = {"scope": scope, "status": "unchanged", "files": [], "ownershipChanged": False, "diagnostics": []}
+        try:
+            state = self.storage(scope).status()
+            if state["recoveryRequired"]:
+                result.update(status="blocked", diagnostics=[{"severity": "error", "code": "host_recovery_required",
+                              "subject": scope, "message": "宿主存在未完成的操作, 请先选择恢复点处理."}])
+            elif not state["enabled"]:
+                result["status"] = "disabled"
+            elif not state["initialized"]:
+                result["status"] = "uninitialized"
+            else:
+                compiled, plan = self._prepare_application(scope)
+                result["diagnostics"] = compiled["diagnostics"]
+                if plan is None:
+                    result["status"] = "blocked"
+                else:
+                    result["files"] = file_preview(plan["targets"], plan["baseline"])
+                    result["ownershipChanged"] = plan["ownership"] != plan["previousOwnership"]
+                    if result["files"] or result["ownershipChanged"]:
+                        result["status"] = "pending"
+        except (StorageError, ValueError, OSError) as error:
+            result.update(status="blocked", diagnostics=[{"severity": "error", "code": getattr(error, "code", "host_inspection"),
+                          "subject": scope, "message": str(error)}])
+        return result
+
+    # //// 保存文件与归属计划并分配确认预览身份 [@x380kkm 2026-09-08] ////
+    def preview(self, scope: str = "user") -> dict:
+        compiled, plan = self._prepare_application(scope)
+        if plan is None:
+            return {"scope": scope, "planId": None, "files": [], "diagnostics": compiled["diagnostics"], "contributions": compiled["contributions"]}
+        result = self._remember(scope, plan["targets"], plan["baseline"], contributions=compiled["contributions"])
+        self.previews[result["planId"]].update(plan)
+        result.update(ownershipChanged=plan["ownership"] != plan["previousOwnership"], diagnostics=compiled["diagnostics"])
+        return result
+
+    # //// 以当前宿主内容为基线预览选中备份 [@x380kkm 2026-09-07] ////
+    def preview_restore(self, id: str, scope: str = "user") -> dict:
+        preview = self.storage(scope).preview_restore(id)
+        return self._remember(scope, preview["targets"], preview["baseline"], backup_id=id)
+
+    # //// 重核编译结果后应用或恢复明确选中的文件 [@x380kkm 2026-09-07] ////
+    def apply(self, plan_id: str) -> dict:
+        plan = self.previews.get(plan_id)
+        if plan is None:
+            raise StorageValidationError("预览已过期, 请重新预览配置差异.")
+        storage = self.storage(plan["scope"])
+        if plan["backupId"]:
+            result = storage.restore(plan["backupId"], plan["baseline"])
+        else:
+            if not storage.status()["enabled"]:
+                raise StorageValidationError("接管已关闭, 请先开启后再应用.")
+            compiled = self.compile(plan["scope"])
+            if (any(note.get("severity") == "error" for note in compiled["diagnostics"]) or compiled["targets"] != plan["compiledTargets"]
+                    or compiled["contributions"] != plan["compiledContributions"]
+                    or compiled.get("instructionSource") != plan.get("instructionSource")
+                    or compiled.get("sourceReads", []) != plan.get("sourceReads", [])):
+                raise StorageConflictError("host-projection")
+            result = storage.apply(plan["targets"], plan["baseline"], ownership=plan["ownership"],
+                                   verify_inputs=lambda written: self.verify_compilation_inputs(plan, written))
+        self.previews.pop(plan_id)
+        return {**result, **self.status(plan["scope"])}

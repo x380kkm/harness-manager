@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "harness-manager"
+version = "0.1.0"
+description = "管理本地 Harness 声明, 来源和使用绑定."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "jsonschema",
+    "PyYAML",
+    "semantic-version",
+    "mcp",
+    "pydantic",
+    "referencing",
+    "tomlkit",
+]
+
+[project.scripts]
+harness-manager = "harness_manager.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+harness_manager = ["protocol.schema.json"]

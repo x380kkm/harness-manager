@@ -1,0 +1,20 @@
+{
+  "name": "harness-manager-desktop",
+  "private": true,
+  "type": "module",
+  "main": "main/main.mjs",
+  "scripts": {
+    "build": "node main/build.mjs",
+    "prestart": "npm run build",
+    "start": "electron .",
+    "presnapshot": "npm run build",
+    "snapshot": "node main/export-snapshot.mjs"
+  },
+  "devDependencies": {
+    "electron": "^44.2.0",
+    "esbuild": "^0.28.2"
+  },
+  "dependencies": {
+    "markdown-it": "^15.0.1"
+  }
+}

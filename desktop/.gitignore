@@ -1,0 +1,4 @@
+node_modules/
+renderer/app.js
+renderer/local-inventory.js
+renderer/.local-inventory-*.js
