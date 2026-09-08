@@ -8,13 +8,14 @@ TOPICS = {
         "text": "默认 scope=user. 用 agent.capabilities 查询方法, 指定 method 读取完整输入与副作用. "
                 "manager_query 仅接受标为 readOnly 的方法; manager_action 提供写入入口, 调用方应先取得具体操作的授权. "
                 "先用 codex.groups 或 catalog.list 搜索摘要, 再按身份读取单项. "
+                "首次接管读取 takeover, 修改规则读取 rules, 宿主应用与恢复读取 host. "
                 "编辑沿用读取基线, 预览后确认差异, 提交后检查 hostSync 和 diagnostics. "
                 "管理器写出静态文件, 宿主直接使用这些文件."
     },
     "editing": {
         "title": "读取, 预览和保存",
         "text": "document.read 返回 document 与 baseline. 修改 document 后, 将原 baseline 一起交给 document.preview. "
-                "确认 changes 后将完整 plan 交给 document.apply. 新声明使用 baseline=null. "
+                "确认 changes 后将完整 plan 交给 document.apply. 新声明省略 baseline. "
                 "预览 diagnostics 的 scope 标明当前编辑及已选项目中新增影响的范围, 保存前逐项确认. "
                 "删除使用 document.preview_remove, 再 document.apply. "
                 "card.describe 的 configBaseline 用于 card.configure, sharingBaseline 用于 card.set_shared. "
@@ -54,21 +55,35 @@ TOPICS = {
                 "迁移时用 codex.read 读取原文, 用 document.read 取得声明与 baseline, 据原文填写或修正上述 fragments, "
                 "再 document.preview, 确认差异后 document.apply. 行号应依据实际原文核对, 普通来源文件按进程的读取授权访问."
     },
+    "takeover": {
+        "title": "首次接管本机配置",
+        "text": "先固定用户授权的宿主范围. 默认 scope=user, 选定 --workspace 后才加入项目; 用户保存或开启接管可能同步当前已初始化且开启接管的项目. "
+                "读取 host.status 与 catalog.list, 用 card.describe 或 usage.describe 核对已登记内容的绑定. enabled=true 是默认控制状态, 实际接管还需要启用绑定及宿主应用. "
+                "host.initialize 保存首次恢复点; 已有 initial 时保留原记录. 保全当前宿主文件, 当前配置层的声明文件与 host.status.backupRoot 中的管理记录, 并记录原本缺失的文件. "
+                "批量迁移前, 用 host.status.baseline 调用 host.set_enabled(enabled=false), 在宿主文件保持原样期间准备声明和绑定. "
+                "用 codex.read 读取原文, 通过 document.preview 与 document.apply 保存选定声明; 现有卡片使用 configBaseline 调用 card.configure 设置启用. "
+                "拆分规则时保持完整正文, 为表格, 条件和所有选定片段补齐原文映射; 具体字段读取 rules 主题. "
+                "关闭状态下使用 host.preview 编译候选, 确认 contributions, files 和 diagnostics. 仅迁移现有规则时, 完整输出应保留原文内容. "
+                "确认允许应用后, 重新读取 host.status 的控制基线, 调用 host.set_enabled 并传入 enabled=true 与该 baseline. 该动作立即尝试应用当前保存配置. "
+                "检查返回的 enabled 和 hostSync, 存在 hostSync.scopes 时逐项核对各范围结果; 再用 host.inspect 核对当前差异. 应用受阻时按实际控制状态处理, 需要关闭自动同步时使用最新基线调用 host.set_enabled(enabled=false). "
+                "后续显式应用另取当前连接中的 host.preview 计划, 恢复按 host 主题选择对应备份."
+    },
     "host": {
         "title": "宿主应用和备份恢复",
         "text": "host.status 返回 enabled, backups 与 baseline. 接管默认开启. "
                 "host.inspect 只读比较保存配置与宿主文件, 返回 pending, unchanged, blocked, disabled 或 uninitialized, 保留已有预览令牌. "
                 "host.initialize 一次存档首次使用前的 AGENTS.md, AGENTS.override.md, config.toml 和 hooks.json, 包括空文件与不存在状态, 宿主文件保持原样. "
-                "后续保存保留这份原始恢复点. "
+                "后续保存保留这份原始恢复点. initial 反映创建时的完整配置, 恢复前核对其文件差异并保全需要保留的当前配置. "
                 "host.preview 返回文件摘要与 planId; 在同一 MCP 或 RPC 进程将 planId 作为 plan_id 传给 host.apply. "
-                "恢复用 host.preview_restore, id 取自 backups, 然后 host.apply. "
+                "普通 host.apply 要求接管已开启. 关闭或未初始化时, host.inspect 只报告状态, 配置审阅使用 host.preview. "
+                "恢复用 host.preview_restore, id 取自 backups 中可恢复的记录, 然后 host.apply; 恢复计划可在接管关闭时应用. "
                 "恢复前保存当前文件和字段归属, 即受管内容及其原值, 保护副本只保留最近一份. "
                 "同名保护副本在恢复成功后替换; 失败或中断的所选目标通过 restore-target 备份保留, 可按 host.status 中的身份重新预览. "
-                "原始恢复点恢复接管前配置, 保护副本和异常事务恢复各自的归属; 恢复成功后关闭接管. "
+                "原始恢复点恢复其保存的配置, 保护副本和异常事务恢复各自的归属; 恢复成功后关闭接管, 声明和绑定继续保留. "
                 "恢复未完成操作前, 当前文件另存为 interrupted, 保留最近一份且保持已有 before-restore. "
                 "backups 中 restorable=false 的记录保留文件字节, restoreError 说明无法确定归属的原因, 应选择可恢复的记录. "
-                "host.set_enabled(enabled=false) 保留宿主当前文件; enabled=true 会尝试应用已保存设置. "
-                "用户自动保存或重新开启接管时, 同步当前已选定, 已初始化且开启接管的项目, hostSync.scopes 分别报告各范围结果. "
+                "host.set_enabled 使用 host.status 返回的 baseline. enabled=false 保留宿主当前文件; enabled=true 立即尝试应用已保存设置, 之后重新读取控制状态和预览. "
+                "用户保存或重新开启接管时, 用户范围返回 applied 或 unchanged 后, 再同步当前已选定, 已初始化且开启接管的项目. hostSync.scopes 仅在进一步处理项目范围时出现, 分别报告各范围结果. "
                 "显式 host.apply 只写预览确认的范围. "
                 "hostSync.status=blocked 表示声明已保存但宿主应用受阻, 应读取 hostSync.diagnostics 并处理原因."
     },
@@ -110,11 +125,12 @@ TOPICS = {
     },
     "connection": {
         "title": "生成外部连接配置",
-        "text": "connection 命令输出 Codex mcp_servers 的 TOML 片段, 不写宿主配置. "
+        "text": "connection 命令只输出 Codex mcp_servers 的 TOML 片段, 由调用者合并到选定的本机配置并重启 MCP 服务. "
                 "默认连接 compact MCP, 提供查询, 写入和按需帮助入口. --full 输出完整工具模式. "
                 "连接使用当前 Python 环境及明确的工作目录; 迁移安装后重新生成. "
                 "可在启动命令前添加 --workspace, --user-root 与重复的 --read-root. "
-                "Codex 配置参考: https://learn.chatgpt.com/docs/config-file/config-reference"
+                "MCP 客户端独立启动 Python 服务, 与桌面面板共享本机管理目录. 接管开关与 MCP 连接分别设置. "
+                "Codex MCP 接入: https://learn.chatgpt.com/docs/extend/mcp"
     },
     "errors": {
         "title": "处理冲突与应用缺口",

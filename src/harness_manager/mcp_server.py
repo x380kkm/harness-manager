@@ -18,7 +18,7 @@ from .service import Manager
 def create_server(manager: Manager, *, compact: bool = False) -> MCPServer:
     server = MCPServer("Harness Manager", instructions=(
         "管理本地静态配置. 从 agent_capabilities 发现方法, 指定 method 读取输入和副作用. "
-        "先查询摘要再读取单项, 编辑携带基线并确认预览. 详细帮助读取 harness://agent/overview 或 agent_help. "
+        "先查询摘要再读取单项, 编辑携带基线并确认预览. 详细帮助读取 harness://agent/overview 或 agent_help; 首次接管读取 takeover. "
         "写入可能应用宿主文件, 需要用户修改授权; host planId 只在当前连接有效."))
     read_only = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     observation = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False)
@@ -39,7 +39,7 @@ def create_server(manager: Manager, *, compact: bool = False) -> MCPServer:
     # //// 读取一个管理主题的操作说明 [@x380kkm 2026-09-08] ////
     @server.tool(annotations=read_only)
     def agent_help(topic: str = "overview") -> dict[str, Any]:
-        """按需读取 overview 返回的单个帮助主题, 包括 rules, modules, host 和 content."""
+        """按需读取 overview 返回的单个帮助主题, 包括 takeover, rules, modules, host 和 content."""
         return invoke("agent.help", {"topic": topic})
 
     # //// 将查询限定到明确的只读管理方法 [@x380kkm 2026-09-08] ////

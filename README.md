@@ -2,16 +2,32 @@
 
 Harness Manager 管理用户和项目的静态配置. 桌面面板, CLI 与 stdio MCP 使用同一管理核心. 模块组合独立的规则, Skills, Hooks 和 Tools, 支持静态输出的成员可应用到宿主配置文件.
 
-## 启动与接口发现
+## 安装与启动
 
-在本目录中运行:
+准备 Git, uv 和 Python 3.12 或更高版本. 以下命令使用 PowerShell 7:
 
 ```powershell
 $ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $true
+git clone https://github.com/x380kkm/harness-manager.git
+Set-Location harness-manager
 uv sync
+```
+
+CLI 和 MCP 使用仓库中的 Python 环境. 桌面面板还需要 Node.js 和 npm; Windows 用户在仓库根目录运行:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+./desktop/启动管理器.ps1
+```
+
+启动入口会准备缺少的桌面依赖并构建页面. 使用 CLI 或给 Agent 查询接口时, 在仓库根目录运行:
+
+```powershell
+$ErrorActionPreference = 'Stop'
 uv run harness-manager api
 uv run harness-manager api module.preview
-uv run harness-manager guide overview
+uv run harness-manager guide
 ```
 
 `api` 返回分页方法目录. 指定方法后返回根据实际处理器签名生成的 `inputSchema`, 持久化副作用和授权边界. `--group` 筛选方法组, `--limit` 与 `--cursor` 控制返回量. `guide` 按主题说明编辑, 模块, 宿主恢复和内容读取.
@@ -24,6 +40,22 @@ uv run harness-manager guide overview
 
 默认使用用户级配置. 启动时传入 `--workspace` 才加入项目, `--read-root` 可重复指定允许读取的额外来源目录. `scope=user` 使用用户默认, `scope=project` 包含项目共享配置, `scope=project-local` 再包含个人覆盖. 来源读取权限与配置生效范围分别维护.
 
+## 接管本机配置
+
+接管把已登记且选中启用的内容写入宿主文件. 卡片的启用绑定决定使用哪些内容, 接管开关决定保存后是否自动应用. `host.status.enabled=true` 是默认控制状态; 实际应用结果由绑定, `lastApplied` 和宿主差异共同确认.
+
+先读取本机状态和首次接管说明:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+uv run harness-manager call host.status
+uv run harness-manager guide takeover
+```
+
+批量迁移已有配置时, 先保全当前宿主文件及管理记录, 再关闭自动接管以准备声明和启用绑定. 规则的完整正文应覆盖原文中的表格, 条件和所有选定片段. `host.preview` 可在接管关闭时编译候选, 用于核对将写入的文件, 成员和差异; `host.inspect` 在关闭状态下只报告状态.
+
+预览符合预期后, 在面板的配置接管与备份中开启接管, 或由 Agent 调用 `host.set_enabled` 并传入最新控制基线. 开启操作会立即尝试应用保存的配置. 检查返回的 `enabled` 与 `hostSync`; 再用 `host.inspect` 确认差异. MCP 接入让 Agent 调用管理接口, 宿主接管负责写出配置, 两者分别设置.
+
 ## 连接外部 Agent
 
 生成 Codex 使用的连接片段:
@@ -33,14 +65,16 @@ $ErrorActionPreference = 'Stop'
 uv run harness-manager connection
 ```
 
-输出包含当前 Python 环境的 `command`, 启动 `args` 和 `cwd`. 由用户将片段加入所选 Codex 配置, 命令自身只输出文本. 指定项目和额外来源时可运行:
+输出包含当前 Python 环境的 `command`, 启动 `args` 和 `cwd`. 将片段合并到所选 Codex `config.toml` 的 `mcp_servers` 配置, 然后在客户端重新启动该 MCP 服务. 服务器由 MCP 客户端启动, 与桌面面板共享本机管理目录. Codex 的配置位置和客户端入口见 [官方 MCP 文档](https://learn.chatgpt.com/docs/extend/mcp). 指定项目和额外来源时可运行:
 
 ```powershell
 $ErrorActionPreference = 'Stop'
 uv run harness-manager --workspace C:/work/project --read-root C:/work/skills connection
 ```
 
-路径替换为实际项目和来源. `connection --format json` 输出结构化配置; `connection --full` 生成完整工具列表的连接. 安装或 Python 环境迁移后重新生成连接. Codex 的配置字段见 [官方配置参考](https://learn.chatgpt.com/docs/config-file/config-reference).
+路径替换为实际项目和来源. `connection --format json` 输出结构化配置; `connection --full` 生成完整工具列表的连接. 源码更新后运行 `uv sync` 并重启 MCP 服务; 桌面依赖通过 `desktop` 目录中的 `npm ci` 更新. 安装目录或 Python 环境迁移后重新生成连接. Codex 的配置字段见 [官方配置参考](https://learn.chatgpt.com/docs/config-file/config-reference).
+
+`connection` 只生成连接片段. 在本机配置中保存片段属于单独的配置修改; 用 `codex mcp list` 查看登记的服务器, 在客户端的 MCP 页面确认连接状态. 生成的绝对路径用于当前机器, 各机器分别生成自己的连接配置.
 
 默认连接使用 `mcp --compact`, 提供四个入口:
 
@@ -54,6 +88,22 @@ uv run harness-manager --workspace C:/work/project --read-root C:/work/skills co
 `manager_query` 只允许能力目录中标为 `readOnly` 的方法, 服务端会拒绝持久化写入. `manager_action` 提供写入入口, 调用方应先取得用户对具体操作的授权; `method` 和 `params` 对应能力目录中的方法与输入. Compact 模式控制工具数量, 同时保留查询和写入能力. 完整模式 `mcp` 还提供 `document_read`, `module_preview` 等专用工具.
 
 服务初始说明只给出简短路由. 详细帮助从 `harness://agent/overview` 发现, 单个主题从 `harness://agent/{topic}` 读取. 声明结构位于 `harness://protocol/schema`. 常规查询使用 `codex.groups` 或 `catalog.list` 的摘要, 再按身份读取正文.
+
+### Agent 调用顺序
+
+连接后先调用 `agent_help` 读取 `overview`, 再按操作选择主题: 首次接管用 `takeover`, 规则编辑用 `rules`, 宿主应用和恢复用 `host`. 通过 `agent_capabilities` 的 `method` 参数读取所需方法的 `inputSchema`, `readOnly`, `writes` 和授权边界.
+
+例如, 给 `manager_query` 传入以下参数可只读检查用户宿主状态:
+
+```json
+{"method":"host.status","params":{}}
+```
+
+编辑时, 用查询入口取得原始对象和基线, 按相应方法预览修改, 确认后将完整计划交给 `manager_action`. 保留读取时的基线, 让管理器检测并发修改. `card.configure` 等直接保存入口也会尝试宿主同步, 调用前先读取方法的副作用并取得修改授权.
+
+`content.read` 读取完整内容单元. 需要固定 Skill 及配套内容时使用 `content.open`, 后续按返回的 `continuation` 调用 `content.continue`. 快照型读取会保存本机观察记录, 按能力目录中的 `readOnly` 选择查询或动作入口.
+
+保存后分别检查声明结果和 `hostSync`, 用 `host.inspect` 核对当前宿主差异. `hostSync.status=blocked` 需要处理其诊断; 接管开关的实际状态以返回的 `enabled` 或最新 `host.status` 为准. 发生基线冲突时保留草稿, 重新读取, 合并和预览.
 
 ## 导入, 预览与保存
 
@@ -100,11 +150,11 @@ if ((Read-Host '输入 apply 确认保存') -eq 'apply') {
 
 `host.status` 返回接管状态, 备份摘要和控制基线. 接管默认开启. `host.initialize` 一次存档首次使用前的 `AGENTS.md`, `AGENTS.override.md`, `config.toml` 和 `hooks.json`, 包括空文件与原本不存在的状态, 宿主文件保持原样. 后续保存保留这份原始恢复点.
 
-`host.set_enabled` 关闭接管时保留宿主当前文件, 开启时尝试应用保存的配置. 管理器退出后, 宿主继续读取已经写出的文件.
+`host.set_enabled` 使用 `host.status` 返回的 `baseline` 作为控制基线. 关闭接管时保留宿主当前文件, 开启时立即尝试应用保存的配置. 开关变化后重新取得状态和预览. 管理器退出后, 宿主继续读取已经写出的文件.
 
-用户自动保存或重新开启接管时, 同步当前已选定, 已初始化且开启接管的项目. `hostSync.scopes` 提供各范围结果, 相关项目应用受阻时总体状态为 `blocked`. `host.inspect` 只读比较文件与配置, 项目页面据此提示待应用内容; 实际写入通过宿主预览确认.
+用户保存或重新开启接管时, 用户范围返回 `applied` 或 `unchanged` 后, 再同步当前已选定, 已初始化且开启接管的项目. `hostSync.scopes` 仅在进一步处理项目范围时出现, 记录各范围结果; 项目应用受阻时总体状态为 `blocked`. `host.inspect` 只读比较文件与配置, 项目页面据此提示待应用内容; 实际写入通过宿主预览确认.
 
-`host.preview` 与 `host.preview_restore` 返回当前服务进程持有的 `planId`. MCP 或逐行 RPC 客户端保持连接, 阅读预览后将该值作为 `plan_id` 传给 `host.apply`. 声明的完整 `plan` 可跨 CLI 调用保存; 宿主 `planId` 随进程结束失效.
+`host.preview` 与 `host.preview_restore` 返回当前服务进程持有的 `planId`. MCP 或逐行 RPC 客户端保持连接, 阅读预览后将该值作为 `plan_id` 传给 `host.apply`. 普通配置应用要求接管已开启; 恢复计划可在接管关闭时应用. 声明的完整 `plan` 可跨 CLI 调用保存; 宿主 `planId` 随进程结束失效.
 
 CLI 提供在同一进程中预览和确认的命令:
 
@@ -115,6 +165,8 @@ uv run harness-manager call host.status
 ```
 
 `host apply` 先输出预览, 输入 `apply` 后提交, 其他输入取消. 从 `host.status` 返回的 `backups` 选择身份后, 使用 `host restore <备份身份>`, 阅读预览并输入 `restore`. 恢复前保存当前文件与字段归属, 即管理器控制哪些内容及其原值; 恢复成功后关闭接管. 原始恢复点恢复接管前的配置, 保护副本与异常事务恢复各自保存的归属. 保护副本只保留最近一份. 项目宿主操作使用 `--workspace` 和 `host --scope project-local`.
+
+`initial` 保存创建恢复点时的整份配置, 可能早于后来的本机修改. 恢复它会影响备份列出的说明文件, 主配置和 Hooks. 接管前, 将当前宿主文件, 当前配置层的声明文件与 `host.status.backupRoot` 的管理记录另存到独立的私有备份目录, 并记录原本缺失的文件. 恢复前逐项核对预览差异. 恢复成功后, 已登记声明和绑定继续保留, 可另行决定是否再次接管.
 
 规则文件的覆盖顺序和项目配置的加载由 Codex 决定. Hook 写入后仍需满足 Codex 的信任要求才能执行.
 
@@ -139,3 +191,16 @@ CLI 和 MCP 使用相同方法. 用 `--workspace` 选择当前位置, 调用 `pr
 `catalog.discover` 按目标和范围返回有界候选, 每项的 `read` 字段给出下一次调用. `content.read` 读取完整单元; `content.open` 固定选定 Skill 和适用配套内容. 收到 `readiness=needs-content` 时使用 `continuation` 调用 `content.continue`, 可增加 `budget` 以容纳更大的完整单元. 可选资料通过 `resource` 或 `resources` 明确请求.
 
 `content.open`, `content.preview` 和 `content.continue` 会保存读取快照或观察记录, 能力目录明确列出这些副作用. `content.preview` 的快照独立于使用次数. `statistics.reads` 统计通过 Manager 完成的读取, 原生宿主直接使用以 `unavailable` 表示未采集.
+
+## 开发与验证
+
+宿主写入验证使用临时 `user_root` 和项目目录. 按改动选择相关用例; 需要运行整套检查时, 在仓库根目录执行:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $true
+uv run python -m unittest discover -s tests
+node --test (Get-ChildItem tests/test_*.mjs).FullName
+```
+
+界面检查和构建使用 `desktop` 的 npm 依赖. Python 依赖与运行要求在 `pyproject.toml` 中声明, 桌面命令由 `desktop/package.json` 定义. 将用户级连接配置和恢复备份保存在私有位置.
