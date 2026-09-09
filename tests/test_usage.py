@@ -77,10 +77,10 @@ class UsageTests(unittest.TestCase):
     def test_removing_project_settings_restores_user_values(self) -> None:
         user = self.save_usage({"options": {"mode": "user", "width": 80}})
         project = self.save_usage({"options": {"width": 100}}, "project")
-        effective = self.manager.discover_content(scope="project")["candidates"][0]
+        effective = self.manager.discover_content(scope="project", detail="full")["candidates"][0]
         self.assertEqual(effective["options"], {"mode": "user", "width": 100})
         self.manager.apply_document(self.manager.preview_remove(project["id"], project, "project")["plan"])
-        self.assertEqual(self.manager.discover_content(scope="project")["candidates"][0]["options"], user["options"])
+        self.assertEqual(self.manager.discover_content(scope="project", detail="full")["candidates"][0]["options"], user["options"])
 
     # //// 用户级预览独立于已选项目中的特殊关闭设置 [@x380kkm 2026-09-06] ////
     def test_user_preview_isolated_from_selected_project_settings(self) -> None:

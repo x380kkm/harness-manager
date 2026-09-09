@@ -7,7 +7,7 @@ import getpass
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .agent_interface import AgentInterface
 from .catalogs import Catalogs, resolve_document
@@ -325,14 +325,20 @@ class Manager:
         target.update(context or {})
         return target
 
-    # //// 按显式上下文发现有界候选 [@x380kkm 2026-09-06] ////
+    # //// 按上下文和内容类型返回候选摘要或来源详情 [@x380kkm 2026-09-08] ////
     def discover_content(self, context: dict | None = None, query: str = "", limit: int = 20, cursor: int = 0,
-                         scope: str | None = None) -> dict:
+                         scope: str | None = None, point: str = "", detail: Literal["summary", "full"] = "summary") -> dict:
         require_text(query, "query")
+        require_text(point, "point")
+        if detail not in ("summary", "full"):
+            raise ServiceError("invalid_params", "detail 需要 summary 或 full.")
         target = self.content_context(context, scope)
         view = self.catalogs.for_scope(scope)
-        result = discover(view.documents, target, query, limit, cursor, layers=view.layers)
+        result = discover(view.documents, target, query, limit, cursor, layers=view.layers, point=point)
         result["diagnostics"] = [*view.diagnostics, *result["diagnostics"]]
+        if detail == "summary":
+            fields = ("ref", "name", "description", "point", "version")
+            result["candidates"] = [{key: candidate[key] for key in fields} for candidate in result["candidates"]]
         for candidate in result["candidates"]:
             params = {"ref": candidate["ref"], "version": candidate["version"]}
             method = "content.read"
@@ -343,6 +349,12 @@ class Manager:
                 params["scope"] = scope
             candidate["read"] = {"method": method, "params": params}
         return result
+
+    # //// 直接列出当前范围可使用的 Skill 摘要 [@x380kkm 2026-09-09] ////
+    def list_skills(self, context: dict | None = None, query: str = "", limit: int = 20, cursor: int = 0,
+                    scope: str = "user") -> dict:
+        return self.discover_content(context or {"host": "harness-manager"}, query, limit, cursor, scope,
+                                     point="skill.x380kkm/deployment", detail="summary")
 
     # //// 取得方法与有效配套内容的完整读取快照 [@x380kkm 2026-09-06] ////
     def open_content(self, ref: str, version: str | None = None, context: dict | None = None,
@@ -463,6 +475,7 @@ class Manager:
             "catalog.graph": lambda scope="user": self.snapshot_catalog(scope)["graph"],
             "catalog.effective": self.effective_catalog, "protocol.schema": schema,
             "catalog.discover": self.discover_content, "content.read": self.read_content,
+            "skill.list": self.list_skills,
             "content.open": self.open_content, "content.continue": self.continue_content,
             "content.snapshot": self.content_snapshot,
             "usage.describe": self.describe_usage, "usage.preview": self.preview_usage,

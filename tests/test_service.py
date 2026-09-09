@@ -61,7 +61,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(len(result["candidates"]), 1)
         candidate = result["candidates"][0]
         self.assertEqual(candidate["version"], "local")
-        read = self.manager.read_content(candidate["content"], candidate["version"])
+        read = self.manager.read_content(candidate["ref"], candidate["version"])
         self.assertEqual(read["units"][0]["content"], source_text)
         self.assertEqual(read["unit_status"], "ready")
         other = self.manager.discover_content({"project": "workspace://another-project"})

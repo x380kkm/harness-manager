@@ -76,12 +76,13 @@ uv run harness-manager --workspace C:/work/project --read-root C:/work/skills co
 
 `connection` 只生成连接片段. 在本机配置中保存片段属于单独的配置修改; 用 `codex mcp list` 查看登记的服务器, 在客户端的 MCP 页面确认连接状态. 生成的绝对路径用于当前机器, 各机器分别生成自己的连接配置.
 
-默认连接使用 `mcp --compact`, 提供四个入口:
+默认连接使用 `mcp --compact`, 提供五个入口:
 
 | 工具 | 用途 |
 | --- | --- |
 | `agent_capabilities` | 分页发现方法, 按方法读取输入 Schema 和副作用 |
 | `agent_help` | 按主题读取流程与边界 |
+| `skill_list` | 列出当前范围可用的 Skill 和读取入口 |
 | `manager_query` | 执行明确标为只读的方法 |
 | `manager_action` | 执行已授权的数据保存或宿主修改 |
 
@@ -91,7 +92,9 @@ uv run harness-manager --workspace C:/work/project --read-root C:/work/skills co
 
 ### Agent 调用顺序
 
-连接后先调用 `agent_help` 读取 `overview`, 再按操作选择主题: 首次接管用 `takeover`, 规则编辑用 `rules`, 宿主应用和恢复用 `host`. 通过 `agent_capabilities` 的 `method` 参数读取所需方法的 `inputSchema`, `readOnly`, `writes` 和授权边界.
+连接后先调用 `agent_help` 读取 `overview` 或 `toolkit`, 再调用 `skill.list` 查看当前范围的 Skill 名称, 摘要, 版本和读取入口. 首次接管用 `takeover`, 规则编辑用 `rules`, 宿主应用和恢复用 `host`. 通过 `agent_capabilities` 的 `method` 参数读取所需方法的 `inputSchema`, `readOnly`, `writes` 和授权边界.
+
+compact MCP 只保留少量发现和路由工具, 这不代表能力只有这些入口. 完整方法目录仍可通过 `agent_capabilities` 分页读取, 写入统一经 `manager_action` 执行. `toolkit` 帮助主题按用途列出内容读取, 声明编辑, 模块关系, 宿主恢复, 项目搬移和诊断入口.
 
 例如, 给 `manager_query` 传入以下参数可只读检查用户宿主状态:
 
@@ -188,7 +191,11 @@ CLI 和 MCP 使用相同方法. 用 `--workspace` 选择当前位置, 调用 `pr
 
 ## 按需读取与统计
 
-`catalog.discover` 按目标和范围返回有界候选, 每项的 `read` 字段给出下一次调用. `content.read` 读取完整单元; `content.open` 固定选定 Skill 和适用配套内容. 收到 `readiness=needs-content` 时使用 `continuation` 调用 `content.continue`, 可增加 `budget` 以容纳更大的完整单元. 可选资料通过 `resource` 或 `resources` 明确请求.
+`catalog.discover` 默认返回用于选择内容的摘要, `read` 提供下一次调用. `point` 在分页前筛选内容类型, Skill 使用 `skill.x380kkm/deployment`; `next_cursor` 是下一页的游标. 使用 `query` 搜索所需内容, 维护来源和绑定时设置 `detail=full` 取得选项, 来源和引用链.
+
+`read` 给出所选内容的下一次调用. `content.read` 读取完整单元; `content.open` 固定选定 Skill 和当前范围的完整配套内容. 收到 `readiness=needs-content` 时使用 `continuation` 调用 `content.continue`, 可增加 `budget` 以容纳更大的完整单元. 可选资料通过 `resource` 或 `resources` 明确请求.
+
+由 Codex 全局加载的规则可在绑定的 `target.selector` 中限定 `host=codex`. 对已经加载这些规则的 Agent, 将个人 Skill 的读取绑定限定为 `host=harness-manager`, 查询时传入相同的 `context.host`. 这时 Skill 读取携带选中正文和适用的任务配套, 全局规则仍由 Codex 注入. 单独核对规则时, 使用 `context.host=codex` 和规则的 `point` 查询, 再按返回的引用读取. 通用客户端继续按照自身范围提供完整上下文.
 
 `content.open`, `content.preview` 和 `content.continue` 会保存读取快照或观察记录, 能力目录明确列出这些副作用. `content.preview` 的快照独立于使用次数. `statistics.reads` 统计通过 Manager 完成的读取, 原生宿主直接使用以 `unavailable` 表示未采集.
 

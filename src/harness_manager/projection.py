@@ -368,13 +368,13 @@ def project_content(documents: list[dict], context: dict, *, layers: dict[str, i
 
 # //// 发现目标范围内的静态候选 [@x380kkm 2026-09-06] ////
 def discover(documents: list[dict], context: dict, query: str = "", limit: int = 20, cursor: int = 0,
-             *, layers: dict[str, int] | None = None) -> dict:
+             *, layers: dict[str, int] | None = None, point: str = "") -> dict:
     if type(limit) is not int or type(cursor) is not int or limit < 1 or cursor < 0:
         diagnostics = []
         diagnose(diagnostics, "invalid_page", "discover", "limit 需要为正整数, cursor 需要为非负整数.")
         return {"candidates": [], "next_cursor": None, "diagnostics": diagnostics}
     projected, diagnostics = project_content(documents, context, layers=layers)
-    candidates = [item.summary for item in projected]
+    candidates = [item.summary for item in projected if not point or item.summary["point"] == point]
     terms = query.casefold().split()
     candidates = [candidate for candidate in candidates if all(term in " ".join(
         str(candidate[key]) for key in ("ref", "name", "description", "point")).casefold() for term in terms)]

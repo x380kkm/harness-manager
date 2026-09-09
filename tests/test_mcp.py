@@ -45,7 +45,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             parameters = StdioServerParameters(**configuration)
             async with Client(parameters) as client:
                 tools = (await client.list_tools()).tools
-                self.assertEqual(len(tools), 4)
+                self.assertEqual(len(tools), 5)
                 records = await client.call_tool("manager_query", {"method": "catalog.list"})
                 self.assertFalse(records.is_error, records.content)
                 self.assertEqual(records.structured_content["documents"], [])
@@ -61,7 +61,13 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             manager = Manager(user_root=root)
             async with Client(create_server(manager, compact=True)) as client:
                 tools = (await client.list_tools()).tools
-                self.assertEqual({tool.name for tool in tools}, {"agent_capabilities", "agent_help", "manager_query", "manager_action"})
+                self.assertEqual({tool.name for tool in tools}, {"agent_capabilities", "agent_help", "manager_query", "manager_action", "skill_list"})
+                skills = await client.call_tool("skill_list", {})
+                self.assertFalse(skills.is_error, skills.content)
+                self.assertTrue(all(item["point"] == "skill.x380kkm/deployment" for item in skills.structured_content["candidates"]))
+                toolkit = await client.call_tool("agent_help", {"topic": "toolkit"})
+                self.assertIn("通用工具集", toolkit.structured_content["title"])
+                self.assertIn("宿主接管", toolkit.structured_content["text"])
                 catalog = await client.call_tool("agent_capabilities", {"group": "host", "limit": 2})
                 self.assertEqual(len(catalog.structured_content["methods"]), 2)
                 self.assertIsNotNone(catalog.structured_content["nextCursor"])

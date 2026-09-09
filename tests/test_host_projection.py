@@ -97,7 +97,7 @@ class HostProjectionTests(unittest.TestCase):
         self.assertEqual(parsed["model"], "chosen-model")
         self.assertEqual(parsed["mcp_servers"]["local"]["env"], {"TOKEN": "private-value"})
         self.assertEqual(parsed["skills"]["config"], [{"path": "independent", "enabled": False},
-                                                      {"path": self.skill.parent.as_posix(), "enabled": True}])
+                                                      {"path": self.skill.as_posix(), "enabled": True}])
         self.assertIn("# independent skill", generated)
         self.assertIn("# managed skill comment", generated)
         rules = result["targets"]["AGENTS.override.md"].decode("utf-8")
@@ -195,7 +195,7 @@ class HostProjectionTests(unittest.TestCase):
         self.assertNotIn("content.open", rules)
         self.assertNotIn("Manager", rules)
         skill_settings = tomllib.loads(result["targets"]["config.toml"].decode())["skills"]["config"]
-        self.assertEqual(skill_settings, [{"path": self.skill.parent.as_posix(), "enabled": True}])
+        self.assertEqual(skill_settings, [{"path": self.skill.as_posix(), "enabled": True}])
         self.configure("disabled")
         source_off = self.compile()
         self.assertNotIn(text, source_off["targets"]["AGENTS.override.md"].decode("utf-8"))
@@ -204,8 +204,8 @@ class HostProjectionTests(unittest.TestCase):
         target_on = self.compile()
         self.assertNotIn(text, target_on["targets"]["AGENTS.override.md"].decode("utf-8"))
         settings = {row["path"]: row["enabled"] for row in tomllib.loads(target_on["targets"]["config.toml"].decode())["skills"]["config"]}
-        self.assertFalse(settings[self.skill.parent.as_posix()])
-        self.assertTrue(settings[target_path.parent.as_posix()])
+        self.assertFalse(settings[self.skill.as_posix()])
+        self.assertTrue(settings[target_path.as_posix()])
 
     # //// 规则来源的配套说明由 subject 引用选择 [@x380kkm 2026-09-07] ////
     def test_rule_subject_adapter_follows_rule_selection(self) -> None:

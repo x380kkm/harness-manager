@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -17,8 +17,10 @@ from .service import Manager
 # //// 注册与桌面共用的管理用例 [@x380kkm 2026-09-06] ////
 def create_server(manager: Manager, *, compact: bool = False) -> MCPServer:
     server = MCPServer("Harness Manager", instructions=(
-        "管理本地静态配置. 从 agent_capabilities 发现方法, 指定 method 读取输入和副作用. "
-        "先查询摘要再读取单项, 编辑携带基线并确认预览. 详细帮助读取 harness://agent/overview 或 agent_help; 首次接管读取 takeover. "
+        "这是 Harness Manager 的通用本地工具集, 覆盖 Skill 和内容读取, 规则与声明编辑, 模块与关系, 宿主接管备份恢复, 项目搬移和诊断. "
+        "compact MCP 只暴露发现和路由入口: skill_list, agent_capabilities, agent_help, manager_query, manager_action. "
+        "先用 agent_help('toolkit') 或 skill_list 了解可用能力, 再用 agent_capabilities 读取具体输入与副作用. "
+        "先查询摘要再读取单项, 编辑携带基线并确认预览. 首次接管读取 takeover. "
         "写入可能应用宿主文件, 需要用户修改授权; host planId 只在当前连接有效."))
     read_only = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     observation = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False)
@@ -57,6 +59,14 @@ def create_server(manager: Manager, *, compact: bool = False) -> MCPServer:
     def manager_action(method: str, params: dict | None = None) -> dict[str, Any]:
         """执行含持久化副作用的方法. 先读取 agent_capabilities 的输入与授权边界, 再传完整基线或已确认计划."""
         return invoke(method, params)
+
+    # //// 直接列出当前范围可使用的 Skill [@x380kkm 2026-09-09] ////
+    @server.tool(annotations=read_only)
+    def skill_list(context: dict | None = None, query: str = "", limit: int = 20, cursor: int = 0,
+                   scope: str = "user") -> dict[str, Any]:
+        """返回 Skill 名称, 摘要, 版本和下一步 content.open 入口."""
+        return invoke("skill.list", {"context": context or {"host": "harness-manager"}, "query": query,
+                                      "limit": limit, "cursor": cursor, "scope": scope})
 
     # //// 公开帮助目录和按需主题资源 [@x380kkm 2026-09-08] ////
     @server.resource("harness://agent/overview", mime_type="application/json")
@@ -245,9 +255,10 @@ def create_server(manager: Manager, *, compact: bool = False) -> MCPServer:
     # //// 查询当前范围内的使用候选 [@x380kkm 2026-09-06] ////
     @server.tool(annotations=read_only)
     def catalog_discover(context: dict | None = None, query: str = "", limit: int = 20, cursor: int = 0,
-                         scope: str | None = None) -> dict[str, Any]:
-        """依据启用的 PluginBinding 返回有界候选, context 负责匹配作用范围."""
-        return invoke("catalog.discover", {"context": context, "query": query, "limit": limit, "cursor": cursor, "scope": scope})
+                         scope: str | None = None, point: str = "", detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
+        """按作用范围和 point 筛选后分页返回摘要与读取入口; detail=full 同时提供来源, 绑定和引用链."""
+        return invoke("catalog.discover", {"context": context, "query": query, "limit": limit, "cursor": cursor,
+                                          "scope": scope, "point": point, "detail": detail})
 
     # //// 按引用读取完整内容单元 [@x380kkm 2026-09-06] ////
     @server.tool(annotations=read_only)

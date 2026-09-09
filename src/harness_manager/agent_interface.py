@@ -14,7 +14,7 @@ QUERY_METHODS = frozenset({
     "context.describe", "context.preview", "context.preview_remove", "codex.snapshot", "codex.list", "codex.groups",
     "codex.read", "codex.import", "catalog.snapshot", "catalog.list", "document.read", "document.preview",
     "document.preview_remove", "document.import", "catalog.graph", "catalog.effective", "protocol.schema",
-    "catalog.discover", "content.read", "content.snapshot", "usage.describe", "usage.preview",
+    "catalog.discover", "skill.list", "content.read", "content.snapshot", "usage.describe", "usage.preview",
     "project.relocate_preview", "rule.describe",
 })
 CATALOG_WRITES = frozenset({"card.configure", "card.set_relation", "card.remove_relation", "card.set_shared",
@@ -73,7 +73,7 @@ class AgentInterface:
                 cli = {"command": "host", "actions": ["apply", "restore"], "confirmation": "same-process",
                        "rpcMethod": "host.apply"}
             family = method.partition(".")[0]
-            topic = {"module": "modules", "usage": "modules", "catalog": "content", "statistics": "content",
+            topic = {"module": "modules", "usage": "modules", "catalog": "content", "skill": "content", "statistics": "content",
                      "codex": "overview", "agent": "overview", "host": "host", "content": "content", "project": "relocation", "rule": "rules"}.get(family, "editing")
             return {"method": method, "inputSchema": input_schema(method, handlers[method]), **method_effects(method),
                     "help": "harness://agent/" + topic,

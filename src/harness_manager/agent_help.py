@@ -8,9 +8,20 @@ TOPICS = {
         "text": "默认 scope=user. 用 agent.capabilities 查询方法, 指定 method 读取完整输入与副作用. "
                 "manager_query 仅接受标为 readOnly 的方法; manager_action 提供写入入口, 调用方应先取得具体操作的授权. "
                 "先用 codex.groups 或 catalog.list 搜索摘要, 再按身份读取单项. "
-                "首次接管读取 takeover, 修改规则读取 rules, 宿主应用与恢复读取 host. "
+                "这是通用本地工具集, 能力范围读取 toolkit 主题. 首次接管读取 takeover, 修改规则读取 rules, 宿主应用与恢复读取 host. "
+                "发现可用 Skill 直接调用 skill.list, 选中后使用返回的 read 调用 content.open. "
                 "编辑沿用读取基线, 预览后确认差异, 提交后检查 hostSync 和 diagnostics. "
                 "管理器写出静态文件, 宿主直接使用这些文件."
+    },
+    "toolkit": {
+        "title": "通用工具集",
+        "text": "Harness Manager 是本机通用工具集. "
+                "Skills 与内容使用 skill.list, catalog.discover, content.read, content.open, content.continue 和 content.snapshot. "
+                "规则与声明使用 document.read, document.preview, document.apply, rule.describe 和 card.configure. "
+                "模块, 配套说明, 使用范围, 关系与共享使用 module, context, usage 和 card 关系方法. "
+                "宿主接管, 文件应用, 备份恢复和状态检查使用 host 方法. "
+                "项目搬移和来源关系使用 project.relocate_preview, project.relocate_apply 与 catalog 方法. "
+                "agent_capabilities 返回所有方法的输入 Schema, readOnly, writes 与授权边界. compact MCP 的工具数量较少, 方法目录仍包含完整管理能力."
     },
     "editing": {
         "title": "读取, 预览和保存",
@@ -89,8 +100,12 @@ TOPICS = {
     },
     "content": {
         "title": "按需读取内容",
-        "text": "catalog.discover 按目标与范围返回有界摘要, candidate.read 给出下一次读取调用. "
+        "text": "catalog.discover 按目标与范围返回有界摘要, 每项保留 ref, name, description, point, version 和 read. "
+                "point 筛选内容类型后再分页, Skill 使用 skill.x380kkm/deployment; next_cursor 用于后续分页. query 按名称, 摘要和身份搜索. "
+                "detail=full 返回来源, 绑定, 选项和引用链, 用于维护和诊断. candidate.read 给出下一次读取调用. "
                 "content.read 读取一个完整单元; content.open 固定选定 Skill 及适用配套内容. "
+                "内容选择遵循绑定的 host 范围. 由 Codex 全局注入的规则可限定 host=codex, 已有这些规则的客户端以 host=harness-manager 读取另行启用的 Skill 和任务配套. "
+                "通用客户端应按自身绑定范围读取所需规则; content.open 保留当前适用的完整内容, 磁盘应用状态独立于客户端上下文. "
                 "readiness=needs-content 时携带 continuation 调用 content.continue, 增加 budget 可容纳较大完整单元. "
                 "可选资源通过 resource 或 resources 明确请求. 读取快照与统计写入用户 observations 目录; "
                 "content.preview 的快照独立于使用次数. 原生宿主使用次数以 unavailable 表示未采集."

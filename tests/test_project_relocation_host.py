@@ -55,7 +55,7 @@ class RelocatedHostTests(unittest.TestCase):
         self.manager.host.apply(preview["planId"])
         configuration = self.current / ".codex/config.toml"
         config = tomllib.loads(configuration.read_text(encoding="utf-8"))
-        self.assertEqual(config["skills"]["config"][0]["path"], (self.current / "skills/method").as_posix())
+        self.assertEqual(config["skills"]["config"][0]["path"], (self.current / "skills/method/SKILL.md").as_posix())
         rendered = (self.current / "AGENTS.override.md").read_text(encoding="utf-8")
         self.assertIn("Use pwsh 7", rendered)
         self.assertIn("Keep these notes", rendered)

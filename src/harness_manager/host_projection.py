@@ -193,8 +193,8 @@ def hook_group(entry) -> dict:
     return {"event": event, "group": group}
 
 
-# //// 取得本地 Skill 的原始文件目录 [@x380kkm 2026-09-07] ////
-def skill_directory(entry, index, reader) -> Path:
+# //// 取得本地 Skill 的实际入口文件 [@x380kkm 2026-09-08] ////
+def skill_entry_path(entry, index, reader) -> Path:
     reference = entry.member.get("source")
     if reference is None:
         raise ContentError("host_skill_source", "Skill 宿主配置需要已物化的本地 SKILL.md 来源.")
@@ -204,8 +204,8 @@ def skill_directory(entry, index, reader) -> Path:
     unit = source_unit(entry, index, reader)
     path = Path(unit.get("path", ""))
     if path.name.casefold() != "skill.md" or not path.is_absolute():
-        raise ContentError("host_skill_entry", "Skill 宿主配置需要指向包含 SKILL.md 的本地目录.")
-    return path.parent
+        raise ContentError("host_skill_entry", "Skill 宿主配置需要指向本地 SKILL.md 入口文件.")
+    return path
 
 
 # //// 把现有配置路径规范到 Skill 所在目录 [@x380kkm 2026-09-07] ////
@@ -239,18 +239,18 @@ def skill_configuration(root: Path, states: dict[Path, bool]) -> bytes:
         configuration = skills["config"] = tomlkit.aot()
     if not isinstance(configuration, list) or any(not isinstance(row, Mapping) for row in configuration):
         raise ContentError("host_skill_configuration", "现有 skills.config 需要 Skill 配置数组.")
-    pending = {configured_skill_path(str(folder), root): (folder, enabled) for folder, enabled in states.items()}
+    pending = {configured_skill_path(str(entry), root): (entry, enabled) for entry, enabled in states.items()}
     found = set()
     for row in configuration:
         value = row.get("path")
         key = configured_skill_path(value, root) if isinstance(value, str) else None
         if key in pending:
-            folder, enabled = pending[key]
-            row["path"], row["enabled"] = folder.as_posix(), enabled
+            entry, enabled = pending[key]
+            row["path"], row["enabled"] = entry.as_posix(), enabled
             found.add(key)
-    for key, (folder, enabled) in pending.items():
+    for key, (entry, enabled) in pending.items():
         if key not in found:
-            configuration.append({"path": folder.as_posix(), "enabled": enabled})
+            configuration.append({"path": entry.as_posix(), "enabled": enabled})
     return tomlkit.dumps(document).encode("utf-8")
 
 
@@ -338,15 +338,15 @@ def compile_host(catalogs, codex, reader, scope: str = "user", *, global_texts: 
                     rules.append(text)
                 target = "AGENTS.override.md"
             else:
-                folder = skill_directory(entry, index, reader)
-                if folder in skills and skills[folder] != enabled:
+                skill_path = skill_entry_path(entry, index, reader)
+                if skill_path in skills and skills[skill_path] != enabled:
                     raise ContentError("host_skill_conflict", "同一 Skill 目录存在互相冲突的启用状态.")
-                skills[folder] = enabled
+                skills[skill_path] = enabled
                 target = "config.toml"
             contributions.append({"ref": reference, "name": entry.summary["name"], "point": point,
                                   "enabled": enabled, "target": target})
             if point == SKILL_POINT:
-                contributions[-1]["path"] = folder.as_posix()
+                contributions[-1]["path"] = skill_path.parent.as_posix()
             elif point == HOOK_POINT:
                 contributions[-1]["hook"] = hook
         except (ContentError, SourceError, OSError, ValueError) as error:

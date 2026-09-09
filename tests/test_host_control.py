@@ -117,19 +117,28 @@ class HostControlTests(unittest.TestCase):
             self.manager.host.apply(preview["planId"])
         self.assertFalse((self.codex / "AGENTS.override.md").exists())
 
-    # //// 已安装 Skill 使用本机原目录并保留配置机密字段 [@x380kkm 2026-09-07] ////
+    # //// 已安装 Skill 的启停使用入口文件并保留配置原值 [@x380kkm 2026-09-08] ////
     def test_installed_skill_is_directly_configured_without_runtime_service(self):
         path = self.user / ".agents/skills/example/SKILL.md"
         path.parent.mkdir(parents=True)
         path.write_text("---\nname: example\ndescription: Example method.\n---\nUse the source.\n", encoding="utf-8")
         item = next(item for item in self.manager.snapshot_cards()["items"] if item["kind"] == "skill")
-        result = self.manager.invoke("card.configure", {"id": item["id"], "state": "enabled"})
+        config = self.codex / "config.toml"
+        original = config.read_bytes()
+        result = self.manager.invoke("card.configure", {"id": item["id"], "state": "disabled"})
         self.assertEqual(result["hostSync"]["status"], "applied")
         text = (self.codex / "config.toml").read_text(encoding="utf-8")
         self.assertIn('# Kept comment\nmodel = "selected"', text)
-        self.assertIn(path.parent.as_posix(), text)
+        self.assertIn('path = "' + path.as_posix() + '"', text)
+        self.assertIn("enabled = false", text)
         self.assertNotIn("mcp_servers", text)
         self.assertEqual(len(self.manager.host.status()["backups"]), 1)
+        restarted = Manager(user_root=self.user)
+        self.assertEqual(restarted.host.inspect()["status"], "unchanged")
+        current = restarted.cards.describe(item["id"])
+        removed = restarted.invoke("card.configure", {"id": item["id"], "state": "inherit", "baseline": current["configBaseline"]})
+        self.assertEqual(removed["hostSync"]["status"], "applied")
+        self.assertEqual(config.read_bytes().rstrip(), original.rstrip())
 
     # //// 独立 Hook 与模块引用均保留其他宿主处理项 [@x380kkm 2026-09-07] ////
     def test_hook_card_and_module_use_static_host_configuration(self):

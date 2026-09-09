@@ -50,7 +50,7 @@ class ContentContractTests(unittest.TestCase):
 
     # //// 单元读取, 完整续读和宿主输出使用同一契约默认入口 [@x380kkm 2026-09-08] ////
     def test_default_source_is_shared_by_read_open_continue_and_host(self) -> None:
-        candidate = next(item for item in self.manager.discover_content()["candidates"]
+        candidate = next(item for item in self.manager.discover_content(detail="full")["candidates"]
                          if item["ref"] == "plugin:methods#rule")
         single = self.manager.read_content(**candidate["read"]["params"])
         unit = single["units"][0]

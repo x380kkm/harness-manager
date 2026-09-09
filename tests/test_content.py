@@ -85,7 +85,7 @@ class ContentTests(unittest.TestCase):
         binding = make_binding("binding:bundle", bundle, {"project": self.manager.workspace.as_uri()})
         for document in (bundle, binding):
             self.manager.apply_document(self.manager.preview_document(document)["plan"])
-        candidate = self.manager.discover_content()["candidates"][0]
+        candidate = self.manager.discover_content(detail="full")["candidates"][0]
         result = self.manager.read_content(candidate["ref"], candidate["version"])
         pending = self.manager.read_content(candidate["ref"], candidate["version"], budget=1)
         for response in (result, pending):

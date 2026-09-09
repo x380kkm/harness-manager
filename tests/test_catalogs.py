@@ -62,7 +62,7 @@ class CatalogLayerTests(unittest.TestCase):
         self.save(manager, defaults)
         local = make_binding("binding:project", plugin, {}, options={"format": {"width": 100}})
         self.save(manager, local, "project")
-        selected = manager.discover_content()["candidates"][0]
+        selected = manager.discover_content(detail="full")["candidates"][0]
         self.assertEqual(selected["options"], {"format": {"width": 100}, "mode": "plain"})
         self.assertEqual(local["target"]["selector"], {})
         catalog = manager.snapshot_catalog("project")
@@ -71,11 +71,11 @@ class CatalogLayerTests(unittest.TestCase):
         inherited = [node for node in catalog["graph"]["nodes"] if node.get("inherited")]
         self.assertTrue(inherited)
         self.assertTrue(all(node["documentId"] is None and node["scope"] == "user" for node in inherited))
-        user_only = Manager(user_root=self.user).discover_content()["candidates"][0]
+        user_only = Manager(user_root=self.user).discover_content(detail="full")["candidates"][0]
         self.assertEqual(user_only["options"]["format"]["width"], 80)
         plan = manager.preview_remove(local["id"], local, "project")["plan"]
         manager.apply_document(plan)
-        self.assertEqual(manager.discover_content()["candidates"][0]["options"], user_only["options"])
+        self.assertEqual(manager.discover_content(detail="full")["candidates"][0]["options"], user_only["options"])
         self.assertEqual(manager.read_document(defaults["id"])["document"], defaults)
 
     # //// 项目目录限定绑定的实际作用位置 [@x380kkm 2026-09-06] ////
