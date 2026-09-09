@@ -98,6 +98,34 @@ def owned_fields(row: Mapping) -> dict:
     return fields
 
 
+# //// 按路径语义比较归属字段并保留宿主原文格式 [@x380kkm 2026-09-09] ////
+def owned_fields_equal(left: Mapping, right: Mapping) -> bool:
+    if set(left) != set(right):
+        return False
+    for key in SKILL_FIELDS:
+        if key not in left:
+            continue
+        if key == "path":
+            left_path = os.path.normcase(os.path.normpath(left[key]))
+            right_path = os.path.normcase(os.path.normpath(right[key]))
+            if left_path != right_path:
+                return False
+        elif left[key] != right[key]:
+            return False
+    return True
+
+
+# //// 应用受管字段并保留等价路径的宿主写法 [@x380kkm 2026-09-09] ////
+def apply_owned_fields(row: Mapping, fields: Mapping) -> dict:
+    for key, value in fields.items():
+        if key == "path" and key in row and owned_fields_equal({key: row[key]}, {key: value}):
+            continue
+        if key in row and row[key] == value:
+            continue
+        row[key] = value
+    return dict(fields)
+
+
 # //// 收集待移除载体上的独立注释与行末注释 [@x380kkm 2026-09-07] ////
 def carrier_comments(value) -> list[str]:
     comments = []
@@ -142,7 +170,10 @@ def check_owned_rows(entries: dict, grouped: dict) -> None:
             if not isinstance(fields, dict) or set(fields) - SKILL_FIELDS:
                 raise StorageValidationError("Skill 归属仅保存 path 与 enabled 字段.")
             owned_fields(fields)
-        if [owned_fields(row) for _, row in grouped.get(key, [])] != record["last"]:
+        current = [owned_fields(row) for _, row in grouped.get(key, [])]
+        if len(current) != len(record["last"]) or any(
+                not owned_fields_equal(actual, expected)
+                for actual, expected in zip(current, record["last"])):
             raise StorageConflictError("host-skill-fields")
 
 
@@ -177,13 +208,15 @@ def apply_skill_fields(rows, grouped: dict, desired: dict, entries: dict, manage
         before = entries[key]["before"] if key in entries else [owned_fields(row) for row in existing]
         if existing and len(existing) != len(wanted):
             raise StorageConflictError("host-skill-row-count")
+        applied = []
         if existing:
             for row, fields in zip(existing, wanted):
-                row.update(fields)
+                applied.append(apply_owned_fields(row, fields))
         else:
             for fields in wanted:
                 rows.append(fields)
-        result[key] = {"before": before, "last": wanted}
+                applied.append(owned_fields(fields))
+        result[key] = {"before": before, "last": applied}
     return result
 
 

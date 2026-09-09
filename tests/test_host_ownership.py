@@ -107,6 +107,27 @@ class HostOwnershipTests(unittest.TestCase):
         with self.assertRaises(StorageConflictError):
             self.reconcile({}, [], {"config.toml": targets["config.toml"] + b'note="mine"\n'}, ownership)
 
+    # //// Windows 路径分隔符变化保持 Skill 归属基线 [@x380kkm 2026-09-09] ////
+    def test_path_separator_change_is_not_an_owned_field_conflict(self) -> None:
+        compiled = ('[[skills.config]]\npath="' + self.folder + '"\nenabled=true\n').encode()
+        targets, ownership = self.reconcile({"config.toml": compiled}, [skill(self.folder)], {"config.toml": None}, {})
+        windows_path = self.folder.replace("/", "\\\\").encode()
+        current = targets["config.toml"].replace(self.folder.encode(), windows_path)
+        restored, final = self.reconcile({}, [], {"config.toml": current}, json.loads(json.dumps(ownership)))
+        self.assertEqual(tomllib.loads(restored["config.toml"].decode()), {})
+        self.assertEqual(final, {})
+
+    # //// 宿主路径写法变化不制造待应用配置差异 [@x380kkm 2026-09-09] ////
+    def test_path_separator_change_preserves_existing_config_bytes(self) -> None:
+        compiled = ('[[skills.config]]\npath="' + self.folder + '"\nenabled=false\n').encode()
+        windows_path = self.folder.replace("/", "\\")
+        before = ("[[skills.config]]\npath='" + windows_path + "'\nenabled=false\n").encode()
+        targets, ownership = self.reconcile({"config.toml": compiled}, [skill(self.folder, False)],
+                                            {"config.toml": before}, {})
+        self.assertEqual(targets["config.toml"], before)
+        entry = next(iter(ownership["skills"]["entries"].values()))
+        self.assertEqual(entry["last"][0]["path"], self.folder)
+
     # //// 重复路径按原数组顺序恢复并拒绝行数变化 [@x380kkm 2026-09-07] ////
     def test_duplicate_paths_preserve_order_and_count(self) -> None:
         before = ('[[skills.config]]\npath="' + self.folder + '"\nenabled=false\nnote="one"\n'
