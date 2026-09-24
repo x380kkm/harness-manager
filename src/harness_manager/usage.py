@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from .catalogs import CatalogView
 from .declarations import contribution_name, index_declarations, matches_version
-from .projection import project_content
+from .projection import _bindings, _plugin_selection, project_content
 from .protocol import document_identity, document_name, value_diagnostics
 
 SETTINGS_SCHEMA = {
@@ -21,6 +21,7 @@ SETTINGS_SCHEMA = {
         "selector": {"type": "object"},
         "acceptance": {"enum": ["keep", "current", "inherit"]},
         "constraint": {"type": ["string", "null"], "minLength": 1},
+        "channel": {"type": ["string", "null"], "minLength": 1},
     },
 }
 
@@ -41,6 +42,17 @@ def find_plugin(view: CatalogView, identity: str) -> dict:
     return matches[0]
 
 
+# //// 按目标范围与绑定层次解析实际选择的发布身份 [@x380kkm 2026-09-10] ////
+def selected_releases(view: CatalogView, context: dict) -> tuple[dict[str, str | None], list[dict]]:
+    index = index_declarations(view.documents)
+    result = {}
+    for identifier, bindings in _bindings(view.documents, context, index.diagnostics, view.layers).items():
+        selector = _plugin_selection(identifier, bindings, index.diagnostics)
+        plugin = index.resolve_plugin(identifier, [selector]) if selector is not None else None
+        result[identifier] = document_identity(plugin) if plugin is not None else None
+    return result, index.diagnostics
+
+
 # //// 描述成员用途与当前可发现内容 [@x380kkm 2026-09-06] ////
 def describe_usage(view: CatalogView, local: list[dict], identity: str, scope: str, context: dict) -> dict:
     plugin = find_plugin(view, identity)
@@ -58,10 +70,15 @@ def describe_usage(view: CatalogView, local: list[dict], identity: str, scope: s
                         "required": any(value.get("criticality", {}).get("default") == "required" for _, value in chain or []),
                         "reference": member.get("ref")})
     projected, diagnostics = project_content(view.documents, context, layers=view.layers)
+    matching = {entry.subject for entry in _bindings(view.documents, context, [], view.layers).get(plugin["id"], [])}
+    releases, release_diagnostics = selected_releases(view, context)
+    diagnostics.extend(note for note in release_diagnostics if note not in diagnostics)
     effective = [item.summary for item in projected if item.summary["plugin"] == plugin["id"]
                  and item.summary["version"] == plugin["release"]["version"]]
     return {"plugin": identity, "pluginId": plugin["id"], "name": document_name(plugin), "release": plugin["release"], "scope": scope,
-            "members": members, "bindings": bindings, "preferred": default["id"] if default else None,
+            "members": members, "bindings": bindings, "contextBindings": [binding for binding in bindings if binding["id"] in matching],
+            "selectedPlugin": releases.get(plugin["id"]),
+            "preferred": default["id"] if default else None,
             "suggestedId": suggestion, "defaults": plugin.get("options", {}).get("defaults", {}),
             "settingsSchema": deepcopy(SETTINGS_SCHEMA),
             "optionsSchema": plugin.get("options", {}).get("schema"), "effective": effective,
@@ -90,6 +107,11 @@ def usage_document(plugin: dict, settings: dict, baseline: dict | None, scope: s
             document["plugin"].pop("constraint", None)
         else:
             document["plugin"]["constraint"] = settings["constraint"]
+    if "channel" in settings:
+        if settings["channel"] is None:
+            document["plugin"].pop("channel", None)
+        else:
+            document["plugin"]["channel"] = settings["channel"]
     if "state" in settings:
         state = settings["state"]
         if state == "inherit":

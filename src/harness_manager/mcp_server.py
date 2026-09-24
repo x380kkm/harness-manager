@@ -65,7 +65,7 @@ def create_server(manager: Manager, *, compact: bool = False) -> MCPServer:
     def skill_list(context: dict | None = None, query: str = "", limit: int = 20, cursor: int = 0,
                    scope: str = "user") -> dict[str, Any]:
         """返回 Skill 名称, 摘要, 版本和下一步 content.open 入口."""
-        return invoke("skill.list", {"context": context or {"host": "harness-manager"}, "query": query,
+        return invoke("skill.list", {"context": context, "query": query,
                                       "limit": limit, "cursor": cursor, "scope": scope})
 
     # //// 公开帮助目录和按需主题资源 [@x380kkm 2026-09-08] ////

@@ -100,6 +100,43 @@ class ProjectRelocationRelationTests(unittest.TestCase):
         self.relocation.apply(preview["plan"])
         self.assert_relation_content()
 
+    # //// 原生与内容宿主的明确关系分别参与项目搬移 [@x380kkm 2026-09-10] ////
+    def test_host_specific_relations_relocate_sources(self) -> None:
+        binding = self.target_edge["baseline"]["binding"]
+        for host in ("codex", "harness-manager", "another-host"):
+            with self.subTest(host=host):
+                binding = self.save_relation_usage({"selector": {"host": host}}, binding)
+                preview = self.relocation.preview(str(self.old))
+                self.assertEqual({value["name"] for value in preview["sourceCandidates"]}, {"source", "target", "detail"})
+
+    # //// 不同宿主的关系保持独立的可达来源集合 [@x380kkm 2026-09-10] ////
+    def test_host_specific_chains_stay_independent(self) -> None:
+        binding = self.target_edge["baseline"]["binding"]
+        self.save_relation_usage({"selector": {"host": "harness-manager"}}, binding)
+        binding = self.detail_edge["baseline"]["binding"]
+        updated = deepcopy(binding)
+        updated["target"]["selector"]["host"] = "codex"
+        self.manager.apply_document(self.manager.preview_document(updated, binding)["plan"])
+
+        preview = self.relocation.preview(str(self.old))
+
+        self.assertEqual({value["name"] for value in preview["sourceCandidates"]}, {"source", "target"})
+
+    # //// 其他宿主的不可达条件保持在其独立内容范围 [@x380kkm 2026-09-10] ////
+    def test_other_host_unreachable_relation_preserves_relocation(self) -> None:
+        binding = self.target_edge["baseline"]["binding"]
+        self.save_relation_usage({"selector": {"host": "harness-manager", "task": "review"}}, binding)
+        private = self.manager.relocation._context(str(self.old))[2]
+        binding = next(value for value in private.snapshot() if value["kind"] == "PluginBinding")
+        updated = deepcopy(binding)
+        updated["target"]["selector"]["host"] = "codex"
+        private.apply(private.preview_put(updated, binding))
+        private.apply(private.preview_put(self.definitions["source"]))
+
+        preview = self.relocation.preview(str(self.old))
+
+        self.assertEqual([value["name"] for value in preview["sourceCandidates"]], ["source"])
+
     # //// 其他项目的关系保留用户来源的原始位置 [@x380kkm 2026-09-08] ////
     def test_other_project_relation_preserves_sources(self) -> None:
         binding = self.target_edge["baseline"]["binding"]

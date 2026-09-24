@@ -29,7 +29,8 @@ def method_effects(method: str) -> dict:
         return {"readOnly": True, "writes": [], "authorization": "read",
                 "planLifetime": "process" if method in {"host.preview", "host.preview_restore"} else "baseline" if "preview" in method else None}
     if method in CATALOG_WRITES:
-        return {"readOnly": False, "writes": ["catalog", "host-if-enabled", "host-backup"], "authorization": "user-change"}
+        return {"readOnly": False, "writes": ["catalog", "host-if-enabled", "host-backup",
+                                               *(["host-hook-request"] if method == "card.configure" else [])], "authorization": "user-change"}
     if method == "project.relocate_apply":
         return {"readOnly": False, "writes": ["catalog", "project-private-location", "host-backup-location"],
                 "authorization": "user-change", "hostApply": "explicit-preview"}

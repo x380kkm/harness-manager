@@ -11,7 +11,8 @@ from .catalogs import Catalogs
 from .codex_inventory import CodexInventory
 from .declarations import contribution_name, index_declarations
 from .inventory_groups import item_description
-from .module_inventory import MEMBER_KINDS, POINT_KINDS, PRESENTATION_CONTRACT, is_module, module_presentation
+from .module_contexts import PRESENTATION_CONTRACT
+from .module_inventory import MEMBER_KINDS, POINT_KINDS, is_module, module_presentation
 from .protocol import document_identity, document_name
 from .storage_errors import StorageConflictError
 

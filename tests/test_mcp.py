@@ -54,6 +54,29 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("host apply", help_topic.structured_content["text"])
             self.assertFalse((root / ".harness").exists())
 
+    # //// 精简 Skill 入口补齐宿主并沿读取引用返回正文 [@x380kkm 2026-09-10] ////
+    async def test_skill_list_partial_context_preserves_host_through_mcp(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manager = Manager(user_root=Path(directory))
+            point = "skill.x380kkm/deployment"
+            plugin = {"apiVersion": "manager.x380kkm/v1", "kind": "Plugin", "id": "plugin:contextual", "release": {"version": "local"},
+                      "contributions": [{"id": "method", "point": point, "contract": {"id": point, "range": "^1.0.0"},
+                                         "payload": {"name": "Method", "text": "Follow the method."}}]}
+            binding = {"apiVersion": "manager.x380kkm/v1", "kind": "PluginBinding", "id": "binding:contextual",
+                       "plugin": {"id": plugin["id"], "constraint": "local"}, "enabled": True,
+                       "target": {"contract": {"id": "manager.scope", "range": "^1.0.0"},
+                                  "selector": {"host": "harness-manager", "task": "review"}}}
+            for document in (plugin, binding):
+                manager.apply_document(manager.preview_document(document)["plan"])
+            async with Client(create_server(manager, compact=True)) as client:
+                found = await client.call_tool("skill_list", {"context": {"task": "review"}})
+                self.assertFalse(found.is_error, found.content)
+                candidate = found.structured_content["candidates"][0]
+                self.assertEqual(candidate["read"]["params"]["context"]["host"], "harness-manager")
+                content = await client.call_tool("manager_action", candidate["read"])
+                self.assertFalse(content.is_error, content.content)
+                self.assertEqual(content.structured_content["readiness"], "ready")
+
     # //// 精简协议按需提供输入结构并拒绝只读路由中的写入 [@x380kkm 2026-09-08] ////
     async def test_compact_discovery_resources_and_query_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

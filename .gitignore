@@ -2,7 +2,6 @@
 __pycache__/
 *.egg-info/
 .harness/
-desktop/node_modules/
 .pytest_cache/
 /archive/
 /cleanread/

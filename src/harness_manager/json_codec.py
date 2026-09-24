@@ -7,6 +7,17 @@ import json
 from typing import Any
 
 
+# //// 按 JSON 类型与数值递归比较配置值 [@x380kkm 2026-09-10] ////
+def json_values_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(json_values_equal(left[key], right[key]) for key in left)
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(json_values_equal(a, b) for a, b in zip(left, right))
+    return left == right
+
+
 # //// 序列化可传输的 JSON 文本 [@x380kkm 2026-09-06] ////
 def encode_json(value: Any, indent: int | None = None) -> str:
     text = json.dumps(value, ensure_ascii=False, allow_nan=False, indent=indent)

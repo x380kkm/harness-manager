@@ -254,11 +254,12 @@ def apply_groups(hooks: dict, previous: dict, desired: dict, positions: dict, or
 
 
 # //// 调和显式受管的事件组并保留外部事件与字段 [@x380kkm 2026-09-08] ////
-def reconcile_hooks(targets: dict, contributions: list, content: bytes | None, ownership: dict) -> None:
+def reconcile_hooks(targets: dict, contributions: list, content: bytes | None, ownership: dict,
+                    hook_file: str = "hooks.json") -> None:
     previous = ownership.get("hooks")
     desired = desired_groups(contributions)
     if previous is None and not desired:
-        if "hooks.json" in targets:
+        if hook_file in targets:
             raise StorageValidationError("Hook 文件输出需要显式生命周期贡献.")
         return
     original = hooks_document(content)
@@ -284,9 +285,9 @@ def reconcile_hooks(targets: dict, contributions: list, content: bytes | None, o
     if not hooks and record["createdHooks"]:
         del document["hooks"]
     if not document and record["createdFile"]:
-        targets["hooks.json"] = None
+        targets[hook_file] = None
     else:
-        targets["hooks.json"] = content if canonical(document) == canonical(original) and content is not None else (encode_json(document, indent=2) + "\n").encode("utf-8")
+        targets[hook_file] = content if canonical(document) == canonical(original) and content is not None else (encode_json(document, indent=2) + "\n").encode("utf-8")
     if desired:
         events = {item["event"] for item in [*desired.values(), *retained.values()]}
         ownership["hooks"] = {**record, "groups": list(desired.values()),
@@ -294,3 +295,23 @@ def reconcile_hooks(targets: dict, contributions: list, content: bytes | None, o
                               "orders": {event: order for event, order in orders.items() if event in events}}
     else:
         ownership.pop("hooks", None)
+
+
+# //// 判断内嵌 Hook 是否取得明确的启用请求 [@x380kkm 2026-09-24] ////
+def requested_enabled(entry: dict, requests: dict) -> bool:
+    request = requests.get(entry.get("ref"))
+    return bool(request.get("enabled")) if isinstance(request, dict) else False
+
+
+# //// 按启用请求写出内嵌在主配置中的 Hook 定义 [@x380kkm 2026-09-24] ////
+def reconcile_embedded_hooks(targets: dict, contributions: list, content: bytes | None,
+                             ownership: dict, hook_file: str) -> None:
+    requests = ownership.get("hookRequests", {})
+    present = [entry for entry in contributions
+               if entry.get("point") != HOOK_POINT or requested_enabled(entry, requests)]
+    if any(entry.get("point") == HOOK_POINT for entry in present) or "hooks" in ownership:
+        reconcile_hooks(targets, present, content, ownership, hook_file)
+    else:
+        targets.pop(hook_file, None)
+    ownership.pop("hookState", None)
+    ownership.pop("hookRequests", None)

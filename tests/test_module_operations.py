@@ -9,7 +9,8 @@ import unittest
 from unittest.mock import patch
 
 from harness_manager.card_subjects import source_document
-from harness_manager.module_inventory import PRESENTATION_CONTRACT, module_inventory, module_presentation
+from harness_manager.module_contexts import PRESENTATION_CONTRACT
+from harness_manager.module_inventory import module_inventory, module_presentation
 from harness_manager.module_operations import ModuleError, ModuleOperations
 from harness_manager.protocol import document_identity
 from harness_manager.service import Manager
@@ -64,6 +65,18 @@ class ModuleOperationTests(unittest.TestCase):
         modules, _, diagnostics = module_inventory(self.manager.catalogs, "user", [self.rule])
         self.assertEqual(diagnostics, [])
         self.assertEqual(modules[0]["id"], result["id"])
+
+    # //// 自定义模块绑定在卡片和使用接口显示同一启用状态 [@x380kkm 2026-09-10] ////
+    def test_custom_module_binding_is_visible_as_current_usage(self):
+        result = self.operations.apply(self.operations.preview("命令执行", "", self.members)["plan"])
+        preview = self.manager.preview_usage(result["documentId"], {"id": "binding:custom/module", "state": "enabled",
+                                                                    "options": {"mode": "personal"}})
+        self.manager.apply_document(preview["plan"])
+        module = next(item for item in self.manager.snapshot_cards()["items"] if item["id"] == result["id"])
+        self.assertEqual(module["details"]["configuredState"], "enabled")
+        usage = self.manager.describe_usage(result["documentId"], context={"host": "codex"})
+        self.assertEqual([binding["id"] for binding in usage["contextBindings"]], ["binding:custom/module"])
+        self.assertEqual(usage["contextBindings"][0]["options"], {"mode": "personal"})
 
     # //// 编辑保持载体说明和发布中的其他字段 [@x380kkm 2026-09-07] ////
     def test_edit_preserves_annotations_member_scope_and_unrelated_fields(self) -> None:

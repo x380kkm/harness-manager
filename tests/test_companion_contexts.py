@@ -5,10 +5,12 @@ from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from harness_manager.companion_contexts import ContextError
 from harness_manager.protocol import document_identity
 from harness_manager.service import Manager
+from harness_manager.storage import Store
 from harness_manager.storage_errors import StorageConflictError
 
 
@@ -149,6 +151,73 @@ class CompanionContextTests(unittest.TestCase):
         with self.assertRaises(StorageConflictError):
             self.manager.contexts.apply(plan)
         self.assertEqual(self.manager.store.snapshot(), before)
+
+    # //// 提交期间的目标成员变化阻止各层保存孤立正文 [@x380kkm 2026-09-10] ////
+    def test_target_changes_during_commit_preserve_context_entries(self) -> None:
+        self.manager = Manager(self.project, [self.source], user_root=self.user)
+        source = self.manager.catalogs.user
+        original = self.plugins["writing"]
+        changed = deepcopy(original)
+        changed["contributions"][0]["id"] = "renamed"
+        apply_many = Store.apply_many
+        for scope in ("user", "project", "project-local"):
+            with self.subTest(scope=scope):
+                target = self.manager.catalogs.select(scope)
+                plan = self.manager.contexts.preview(self.target, self.settings(), scope=scope)["plan"]
+                inserted = False
+
+                # //// 在事务入口保存外部目标成员修改 [@x380kkm 2026-09-10] ////
+                def change_target(store, entries, **kwargs):
+                    nonlocal inserted
+                    if store is target and not inserted:
+                        inserted = True
+                        apply_many(source, [source.preview_put(changed, original)])
+                    return apply_many(store, entries, **kwargs)
+
+                with patch.object(Store, "apply_many", change_target):
+                    with self.assertRaises(StorageConflictError) as raised:
+                        self.manager.contexts.apply(plan)
+                self.assertEqual(raised.exception.details["scope"], scope)
+                self.assertIn(changed, source.snapshot())
+                self.assertFalse({entry["id"] for entry in plan["entries"]}
+                                 & {document_identity(document) for document in target.snapshot()})
+                source.apply(source.preview_put(original, changed))
+
+    # //// 别名所引用的 Skill 发布变化也参与联合提交核对 [@x380kkm 2026-09-10] ////
+    def test_referenced_target_change_blocks_context_commit(self) -> None:
+        wrapper = {"apiVersion": "manager.x380kkm/v1", "kind": "Plugin", "id": "plugin:wrapper",
+                   "release": {"version": "local"}, "contributions": [{"id": "writing", "ref": self.ref}]}
+        self.save(wrapper)
+        plan = self.manager.contexts.preview(document_identity(wrapper), self.settings())["plan"]
+        original = self.plugins["writing"]
+        changed = deepcopy(original)
+        changed["contributions"][0]["id"] = "renamed"
+        apply_many = Store.apply_many
+        inserted = False
+
+        # //// 在事务入口保存引用来源的外部修改 [@x380kkm 2026-09-10] ////
+        def change_target(store, entries, **kwargs):
+            nonlocal inserted
+            if store is self.manager.store and not inserted:
+                inserted = True
+                apply_many(store, [store.preview_put(changed, original)])
+            return apply_many(store, entries, **kwargs)
+
+        with patch.object(Store, "apply_many", change_target):
+            with self.assertRaises(StorageConflictError):
+                self.manager.contexts.apply(plan)
+        self.assertFalse({entry["id"] for entry in plan["entries"]}
+                         & {document_identity(document) for document in self.manager.store.snapshot()})
+
+    # //// 已预览的移除操作在目标发布消失后仍可清理正文 [@x380kkm 2026-09-10] ////
+    def test_prepared_removal_survives_target_removal(self) -> None:
+        context = self.create()
+        plan = self.manager.contexts.preview_remove(self.target, context["baseline"])["plan"]
+        self.manager.store.apply(self.manager.store.preview_remove(self.target, self.plugins["writing"]))
+        result = self.manager.contexts.apply(plan)
+        self.assertTrue(result["removed"])
+        self.assertFalse({entry["id"] for entry in plan["entries"]}
+                         & {document_identity(document) for document in self.manager.store.snapshot()})
 
 
 if __name__ == "__main__":

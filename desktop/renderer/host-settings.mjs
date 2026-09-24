@@ -2,7 +2,7 @@
 // # host-settings
 // 接管开关与备份恢复分别操作, 文件写入经当前预览确认后提交.
 
-import { request, textElement } from './view-utils.mjs';
+import { refreshAfterSave, request, textElement } from './view-utils.mjs';
 
 // //// 提供宿主接管状态, 文件预览和备份恢复 [@x380kkm 2026-09-07] ////
 export function createHostSettings({ run, onSaved, onSource, setStatus }) {
@@ -35,14 +35,28 @@ export function createHostSettings({ run, onSaved, onSource, setStatus }) {
       : result.ownershipChanged ? '文件内容保持不变, 确认后更新管理归属.' : '当前没有待应用的文件变化.'));
     confirmation.textContent = result.backupId ? '恢复所选备份' : '应用到文件';
     confirmation.hidden = !result.files.length && !result.backupId && !result.ownershipChanged;
+    confirmation.disabled = window.manager.readOnly === true || !result.backupId && !current.enabled;
+    if (!result.backupId && !current.enabled) previewBox.append(textElement('p', '接管已关闭. 核对差异后可开启接管并应用当前配置.', 'card-hint'));
     previewBox.scrollIntoView({ block: 'nearest' });
   }
 
+  // //// 采用完整宿主状态并重置既有预览 [@x380kkm 2026-09-10] ////
+  function acceptStatus(result) {
+    if (result.available === false) throw new Error(result.reason);
+    current = result;
+    preview = null; render();
+  }
+
+
   // //// 重新读取状态并保持备份选择明确 [@x380kkm 2026-09-07] ////
   async function load() {
-    current = await request('host.status', { scope });
-    if (current.available === false) throw new Error(current.reason);
-    preview = null; render();
+    acceptStatus(await request('host.status', { scope }));
+  }
+
+
+  // //// 分别呈现宿主保存结果与卡片刷新状态 [@x380kkm 2026-09-10] ////
+  async function refreshSaved(message) {
+    await refreshAfterSave(onSaved, (value) => { feedback.textContent = value; setStatus(value); }, message);
   }
 
   // //// 显示搬移涉及的配置路径与可选择用户来源 [@x380kkm 2026-09-08] ////
@@ -70,6 +84,7 @@ export function createHostSettings({ run, onSaved, onSource, setStatus }) {
     refresh.addEventListener('click', () => execute(async () => showRelocation(await request('project.relocate_preview',
       { old_workspace: result.plan.oldWorkspace, source_ids: [...selected] }))));
     previewBox.append(refresh); confirmation.textContent = '确认重新关联'; confirmation.hidden = !result.changes.length;
+    confirmation.disabled = window.manager.readOnly === true;
     previewBox.scrollIntoView({ block: 'nearest' });
   }
 
@@ -95,10 +110,9 @@ export function createHostSettings({ run, onSaved, onSource, setStatus }) {
     enabled.setAttribute('aria-label', '开启配置接管');
     enabled.addEventListener('change', () => execute(async () => {
       const result = await request('host.set_enabled', { enabled: enabled.checked, scope, baseline: current.baseline });
-      await load(); await onSaved();
-      feedback.textContent = result.hostSync.message;
+      acceptStatus(result);
       if (result.hostSync.diagnostics?.length) showPreview(result.hostSync);
-      setStatus(feedback.textContent);
+      await refreshSaved(result.hostSync.message);
     }));
     label.append(enabled, textElement('span', '开启配置接管')); control.append(label);
     control.append(textElement('p', current.enabled
@@ -106,7 +120,7 @@ export function createHostSettings({ run, onSaved, onSource, setStatus }) {
       : '接管已关闭. 文件保持不变, 宿主继续使用当前设置. 恢复首次使用前的状态请另行选择恢复原配置.', 'card-hint'));
     control.append(textElement('p', '宿主直接读取配置文件, 管理器退出后仍可使用. 管理器只负责编辑, 组合和写入.', 'card-hint'));
     if (current.recoveryRequired) control.append(textElement('p', '存在未完成的文件写入, 请先在下方选择对应备份恢复.', 'diagnostic'));
-    const inspect = textElement('button', '预览待应用设置'); inspect.disabled = window.manager.readOnly || !current.enabled || current.recoveryRequired;
+    const inspect = textElement('button', '预览待应用设置'); inspect.disabled = window.manager.readOnly === true || current.recoveryRequired === true;
     inspect.addEventListener('click', () => execute(async () => showPreview(await request('host.preview', { scope })))); control.append(inspect);
     body.append(control);
     const backups = textElement('section', '', 'settings-section'); backups.append(textElement('h3', '配置备份'));
@@ -141,16 +155,19 @@ export function createHostSettings({ run, onSaved, onSource, setStatus }) {
     body = textElement('div', '', 'host-settings-body'); feedback = textElement('p', '', 'settings-feedback'); feedback.setAttribute('aria-live', 'polite');
     const actions = textElement('div', '', 'dialog-actions'); confirmation = textElement('button', '应用到文件', 'primary');
     confirmation.addEventListener('click', () => execute(async () => {
+      if (confirmation.disabled) return;
       if (preview?.relocationPlan) {
         const result = await request('project.relocate_apply', { plan: preview.relocationPlan });
-        await load(); await onSaved();
-        feedback.textContent = `项目配置已重新关联, 宿主文件保持不变. 请分别预览应用: ${result.hostApplyRequired.join(', ')}.`;
+        preview = null; confirmation.hidden = true; confirmation.disabled = true;
+        await refreshAfterSave(async () => { await load(); await onSaved(); },
+          (value) => { feedback.textContent = value; setStatus(value); },
+          `项目配置已重新关联, 宿主文件保持不变. 请分别预览应用: ${result.hostApplyRequired.join(', ')}.`);
         return;
       }
       if (!preview?.planId) return;
       const restoring = Boolean(preview.backupId);
-      await request('host.apply', { plan_id: preview.planId }); await load(); await onSaved();
-      feedback.textContent = restoring ? '所选备份已恢复, 接管已关闭. 恢复前的文件另有保护副本.' : '配置文件已应用. 首次使用前的恢复点保持不变.';
+      acceptStatus(await request('host.apply', { plan_id: preview.planId }));
+      await refreshSaved(restoring ? '所选备份已恢复, 接管已关闭. 恢复前的文件另有保护副本.' : '配置文件已应用. 首次使用前的恢复点保持不变.');
     })); actions.append(confirmation); dialog.append(heading, body, feedback, actions);
     await load(); dialog.showModal();
   }

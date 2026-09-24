@@ -89,12 +89,13 @@ def document_name(document: dict[str, Any]) -> str:
 
 # //// 匹配精确来源版本或语义版本约束 [@x380kkm 2026-09-06] ////
 def matches_version(version: str, constraint: str | None) -> bool:
+    if not isinstance(version, str) or constraint is not None and not isinstance(constraint, str):
+        raise ValueError("版本与约束需要字符串.")
     if not constraint or constraint == "*" or constraint == version:
         return True
-    if not isinstance(version, str) or not isinstance(constraint, str):
-        raise ValueError("版本与约束需要字符串.")
+    if constraint.startswith(("git:", "local:")) or constraint == "local":
+        return False
+    specification = NpmSpec(constraint)
     if version.startswith(("git:", "local:")) or version == "local":
-        if constraint.startswith(("git:", "local:")) or constraint == "local":
-            return False
-        raise ValueError(f"来源版本 {version} 需要精确版本约束.")
-    return NpmSpec(constraint).match(Version(version))
+        return False
+    return specification.match(Version(version))

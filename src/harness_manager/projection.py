@@ -12,6 +12,7 @@ from typing import Any
 
 from .declarations import DeclarationIndex, contribution_name, diagnose, index_declarations, matches_version
 from .protocol import document_identity, value_diagnostics
+from .json_codec import json_values_equal
 
 
 SCOPE_KEYS = frozenset({"user", "host", "project", "path", "task", "agent"})
@@ -79,8 +80,8 @@ def resolve_scope(scope: dict | None, context: dict, subject: str, diagnostics: 
     if set(selector) - SCOPE_KEYS or scope.get("inherit") is False:
         diagnose(diagnostics, "unknown_scope", subject, "范围字段或继承方式缺少静态解释.")
         return None
-    resolved = {}
-    for key, selection in selector.items():
+    resolved, missing = {}, []
+    for key, selection in sorted(selector.items()):
         values = selection if isinstance(selection, list) else [selection]
         if not values or any(not isinstance(value, str) or not value for value in values):
             diagnose(diagnostics, "unknown_scope_value", subject, f"范围 {key} 需要明确的字符串或字符串集合.")
@@ -89,8 +90,8 @@ def resolve_scope(scope: dict | None, context: dict, subject: str, diagnostics: 
             continue
         actual = context.get(key)
         if not isinstance(actual, str) or not actual:
-            diagnose(diagnostics, "missing_context", subject, f"当前目标缺少 {key}.")
-            return None
+            diagnose(missing, "missing_context", subject, f"当前目标缺少 {key}.")
+            continue
         values = [actual if value == "current" else value for value in values]
         if key == "path":
             if any(character in value for value in values for character in "*?[]"):
@@ -103,7 +104,17 @@ def resolve_scope(scope: dict | None, context: dict, subject: str, diagnostics: 
         if not matched:
             return None
         resolved[key] = tuple(sorted(set(values)))
+    if missing:
+        diagnostics.extend(missing)
+        return None
     return resolved
+
+
+# //// 判断范围是否仍可能适用于当前目标 [@x380kkm 2026-09-10] ////
+def scope_may_match(scope: dict | None, context: dict) -> bool:
+    diagnostics = []
+    resolved = resolve_scope(scope, context, "scope", diagnostics)
+    return resolved is not None or bool(diagnostics)
 
 
 # //// 判断声明范围的包含关系 [@x380kkm 2026-09-06] ////
@@ -160,7 +171,7 @@ def resolve_values(values: list[ScopedValue], diagnostics: list[dict], field: st
             result[key] = value
         return valid, result
     first = current[0].value
-    if any(type(item.value) is not type(first) or item.value != first for item in current[1:]):
+    if any(type(item.value) is not type(first) or not json_values_equal(item.value, first) for item in current[1:]):
         sources = ", ".join(sorted(item.subject for item in current))
         diagnose(diagnostics, "binding_conflict", field, f"同层或不可比较范围的设置相互冲突: {sources}.")
         return False, None
@@ -289,7 +300,8 @@ def _source(chain: list[tuple[dict, dict]], diagnostics: list[dict]) -> dict:
 
 
 # //// 求值单个 Plugin 的可用内容和必需缺口 [@x380kkm 2026-09-08] ////
-def _project_plugin(index: DeclarationIndex, plugin: dict, bindings: list[ScopedValue], context: dict) -> ContentProjection:
+def _project_plugin(index: DeclarationIndex, plugin: dict, bindings: list[ScopedValue], context: dict,
+                    points: frozenset[str] | None = None) -> ContentProjection:
     projection = ContentProjection(diagnostics=index.diagnostics)
     active, options = _binding_configuration(plugin, bindings, index.diagnostics)
     if not active:
@@ -301,22 +313,38 @@ def _project_plugin(index: DeclarationIndex, plugin: dict, bindings: list[Scoped
                 diagnose(index.diagnostics, "missing_selection_target", binding.subject, f"成员 {identifier} 尚未提供声明.")
     for alias in plugin["contributions"]:
         reference = f"{plugin['id']}#{alias['id']}"
-        selected, required = _selection(alias["id"], bindings, index.diagnostics, reference)
-        chain = index.resolve_reference(reference, plugin["release"]["version"])
-        if chain is None:
+        selected, binding_required = _selection(alias["id"], bindings, index.diagnostics, reference)
+        member_index = DeclarationIndex(index.plugins, point_contracts=index.point_contracts)
+        chain, complete = member_index.resolve_reference_path(reference, plugin["release"]["version"])
+        if complete and points is not None and chain[-1][1].get("point") not in points:
             continue
-        normalized, applicable = [], True
+        normalized, applicable, required = [], True, binding_required
         for owner, member in chain:
             member_ref = f"{owner['id']}#{member['id']}"
-            valid, content = normalize_member(member, index.point_contracts, index.diagnostics, member_ref)
+            valid, content = normalize_member(member, index.point_contracts, member_index.diagnostics, member_ref)
             normalized.append((owner, content))
+            required = required or content.get("criticality", {}).get("default") == "required"
             if not valid:
-                required = required or content.get("criticality", {}).get("default") == "required"
                 applicable = False
                 break
-            accepted, necessary = _content_state(content, context, member_ref, index.diagnostics)
-            required = required or necessary
-            applicable = applicable and accepted
+        scoped_chain = [*normalized, *chain[len(normalized):]]
+        scope_applicable = all(scope_may_match(content.get("scope"), context) for _, content in scoped_chain)
+        if not scope_applicable and not binding_required:
+            continue
+        index.diagnostics.extend(note for note in member_index.diagnostics if note not in index.diagnostics)
+        if not complete:
+            if required:
+                projection.unavailable.append(UnavailableContent(reference, scoped_chain or [(plugin, alias)]))
+                diagnose(index.diagnostics, "required_unavailable", reference, "必要成员的引用链需要唯一的完整内容声明.")
+            continue
+        if not selected and not required:
+            continue
+        applicable = applicable and scope_applicable
+        if applicable:
+            for owner, content in normalized:
+                accepted, necessary = _content_state(content, context, f"{owner['id']}#{content['id']}", index.diagnostics)
+                required = required or necessary
+                applicable = applicable and accepted
         if required and (not selected or not applicable):
             projection.unavailable.append(UnavailableContent(reference, [*normalized, *chain[len(normalized):]]))
         if not selected:
@@ -345,7 +373,8 @@ def _project_plugin(index: DeclarationIndex, plugin: dict, bindings: list[Scoped
 
 
 # //// 求值当前目标的全部静态内容输入 [@x380kkm 2026-09-06] ////
-def project_selection(documents: list[dict], context: dict, *, layers: dict[str, int] | None = None) -> ContentProjection:
+def project_selection(documents: list[dict], context: dict, *, layers: dict[str, int] | None = None,
+                      points: frozenset[str] | None = None) -> ContentProjection:
     index = index_declarations(documents)
     projection = ContentProjection(diagnostics=index.diagnostics)
     for identifier, bindings in sorted(_bindings(documents, context, index.diagnostics, layers or {}).items()):
@@ -354,15 +383,16 @@ def project_selection(documents: list[dict], context: dict, *, layers: dict[str,
             continue
         plugin = index.resolve_plugin(identifier, [selector])
         if plugin is not None:
-            selected = _project_plugin(index, plugin, bindings, context)
+            selected = _project_plugin(index, plugin, bindings, context, points)
             projection.candidates.extend(selected.candidates)
             projection.unavailable.extend(selected.unavailable)
     return projection
 
 
 # //// 生成当前目标的可用内容与诊断 [@x380kkm 2026-09-08] ////
-def project_content(documents: list[dict], context: dict, *, layers: dict[str, int] | None = None) -> tuple[list[ProjectedContent], list[dict]]:
-    projection = project_selection(documents, context, layers=layers)
+def project_content(documents: list[dict], context: dict, *, layers: dict[str, int] | None = None,
+                    points: frozenset[str] | None = None) -> tuple[list[ProjectedContent], list[dict]]:
+    projection = project_selection(documents, context, layers=layers, points=points)
     return projection.candidates, projection.diagnostics
 
 

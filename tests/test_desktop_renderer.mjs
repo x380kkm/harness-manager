@@ -63,7 +63,7 @@ test('开启接管受阻时保留来源诊断, 关闭后显示实际结果', asy
     } };
     if (method === 'host.set_enabled') {
       enabled = params.enabled;
-      return { ok: true, result: { hostSync: enabled
+      return { ok: true, result: { enabled, initialized: true, targetRoot: '/host', backupRoot: '/backup', baseline: {}, backups: [], hostSync: enabled
         ? { status: 'blocked', message: '接管已开启, 宿主应用受阻.', diagnostics: [{ message: '规则来源片段无法唯一匹配.' }] }
         : { status: 'disabled', message: '接管已关闭, 宿主继续使用当前配置.' } } };
     }
@@ -327,7 +327,7 @@ test('后台等待保留浏览, 配置动作防重入, 较慢声明响应保持�
   assert.equal(get('project-catalog-button').disabled, true);
 });
 
-// //// 模块快捷启停只编辑当前范围的默认绑定 [@x380kkm 2026-09-08] ////
+// //// 模块快捷启停保持条件绑定独立 [@x380kkm 2026-09-08] ////
 test('模块快捷启停保留独立接收条件的自定义绑定', async (context) => {
   for (const scope of ['user', 'project-local']) await context.test(scope, async (context) => {
     const custom = { id: 'binding:reviewer-only', plugin: { id: 'plugin:module/commands' }, enabled: false, target: { selector: { agent: 'reviewer' } } };
@@ -343,7 +343,9 @@ test('模块快捷启停保留独立接收条件的自定义绑定', async (cont
         items: [{ ...item, details: { ...item.details, configuredState: bindings.find((binding) => binding.id === defaultId)?.enabled === true ? 'enabled' : 'inherit' } }],
         groups: [{ id: 'g:module', primaryId: item.id, itemIds: [item.id], category: 'module', name: item.name, origin: 'user', counts: { module: 1 } }],
       };
-      if (method === 'usage.describe') return { bindings: structuredClone(bindings), preferred: bindings.find((binding) => binding.id === defaultId)?.id || custom.id };
+      if (method === 'usage.describe') return { bindings: structuredClone(bindings), contextBindings: bindings.filter((binding) => binding.id === defaultId),
+        plugin: item.details.documentId, release: { version: 'local' }, selectedPlugin: bindings.some((binding) => binding.id === defaultId) ? item.details.documentId : null,
+        suggestedId: defaultId, preferred: bindings.find((binding) => binding.id === defaultId)?.id || custom.id };
       if (method === 'usage.preview') return { plan: { after: { ...(params.baseline || { id: defaultId }), enabled: params.settings.state === 'enabled' } } };
       if (method === 'document.preview_remove') return { plan: { id: params.id, after: null } };
       if (method === 'document.apply') {
@@ -369,6 +371,44 @@ test('模块快捷启停保留独立接收条件的自定义绑定', async (cont
     assert.ok(previews.every((call) => call.params.scope === scope));
     assert.deepEqual(calls.filter((call) => call.method === 'document.preview_remove').map((call) => call.params.id), [defaultId]);
   });
+});
+
+// //// 唯一适用的自定义模块绑定沿用原始设置与身份 [@x380kkm 2026-09-10] ////
+test('模块快捷启停和继承使用当前自定义绑定', async (context) => {
+  const original = { id: 'binding:custom/module', plugin: { id: 'plugin:module/custom' }, enabled: true,
+    target: { selector: { user: 'current', host: 'codex' } }, options: { mode: 'personal' } };
+  let bindings = [structuredClone(original)], pending;
+  const calls = [];
+  const item = { id: 'module:custom', name: '自定义模块', kind: 'module', path: '/catalog', details: {
+    pluginId: original.plugin.id, documentId: `${original.plugin.id}@local`, members: [], memberCounts: {} } };
+  const get = rendererRuntime(context, (method, params) => {
+    calls.push({ method, params: structuredClone(params) });
+    if (method === 'card.inventory') return { root: '/user', scannedAt: new Date().toISOString(), edges: [],
+      items: [{ ...item, details: { ...item.details, configuredState: bindings[0]?.enabled ? 'enabled' : 'disabled' } }],
+      groups: [{ id: 'g:custom', primaryId: item.id, itemIds: [item.id], category: 'module', name: item.name, origin: 'user', counts: { module: 1 } }] };
+    if (method === 'usage.describe') return { bindings: structuredClone(bindings), contextBindings: structuredClone(bindings), suggestedId: 'binding:user/module',
+      plugin: item.details.documentId, release: { version: 'local' }, selectedPlugin: bindings.length ? item.details.documentId : null };
+    if (method === 'usage.preview') return { plan: { after: { ...params.baseline, enabled: params.settings.state === 'enabled' } } };
+    if (method === 'document.preview_remove') return { plan: { id: params.id, after: null } };
+    if (method === 'document.apply') { bindings = params.plan.after ? [params.plan.after] : []; return {}; }
+    throw new Error(method);
+  });
+  const { createInventoryView } = await import('../desktop/renderer/inventory-view.mjs');
+  const view = createInventoryView({ run: (action) => { pending = action(); return pending; }, setStatus() {}, onDirty() {} });
+  await view.refresh();
+  get('inventory-show-disabled').checked = true;
+  await get('inventory-show-disabled').emit('change');
+  for (const state of ['disabled', 'enabled', 'inherit']) {
+    const control = get('inventory-list').querySelector('select');
+    control.value = state; await control.emit('change'); await pending;
+    if (state !== 'inherit') {
+      assert.equal(bindings[0].id, original.id);
+      assert.deepEqual(bindings[0].options, original.options);
+      assert.deepEqual(bindings[0].target, original.target);
+    }
+  }
+  assert.equal(bindings.length, 0);
+  assert.deepEqual(calls.filter((call) => call.method === 'document.preview_remove').map((call) => call.params.id), [original.id]);
 });
 
 // //// 显示编辑影响并在保存后保留独立的刷新结果 [@x380kkm 2026-09-08] ////

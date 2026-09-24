@@ -5,8 +5,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+from .card_bindings import applicable_bindings, card_binding, configured_binding, plugin_bindings
 from .card_relations import CardRelations
 from .card_subjects import CardError, CardSubjects, POINTS
+from .card_hook_state import hook_scope, observe_hook, save_hook_request
 from .card_sharing import configure_project, set_shared as share_card, sharing_baseline, sharing_portability
 from .catalogs import Catalogs
 from .codex_inventory import CodexInventory
@@ -14,13 +16,7 @@ from .declarations import contribution_name
 from .projection import ScopedValue, resolve_scope, resolve_values
 from .protocol import document_identity
 from .storage_errors import StorageConflictError
-from .usage import usage_document
-
-
-# //// 找到卡片在指定层的默认绑定 [@x380kkm 2026-09-07] ////
-def card_binding(documents: list[dict], plugin: str, scope: str) -> dict | None:
-    identity = f"binding:{scope}/{plugin}"
-    return next((value for value in documents if value["kind"] == "PluginBinding" and value["id"] == identity), None)
+from .storage_errors import StorageError
 
 
 # //// 把显式绑定转换为用户可选的启用状态 [@x380kkm 2026-09-07] ////
@@ -28,6 +24,16 @@ def configured_state(binding: dict | None) -> str:
     if binding is None or "enabled" not in binding:
         return "inherit"
     return "enabled" if binding["enabled"] else "disabled"
+
+
+# //// 汇总每层适用绑定的开关并保留多绑定诊断 [@x380kkm 2026-09-10] ////
+def layer_state(frame: CardSubjects, plugin: str, scope: str, diagnostics: list[dict]) -> str | None:
+    bindings = applicable_bindings(frame, plugin, scope)
+    states = {configured_state(binding) for binding in bindings}
+    if len(bindings) > 1:
+        diagnostics.append({"code": "card_binding_ambiguous", "subject": plugin, "scope": scope,
+                            "message": "当前层有多个适用的使用绑定, 快捷修改需要选择具体绑定."})
+    return None if len(states) > 1 else next(iter(states), "inherit")
 
 
 # //// 合成当前范围的 Manager 使用状态 [@x380kkm 2026-09-07] ////
@@ -51,25 +57,33 @@ def effective_enabled(frame: CardSubjects, plugin: str) -> tuple[bool | None, li
 def card_management(frame: CardSubjects, identity: str) -> dict:
     document = frame.definition(identity)
     subject = frame.subject(identity)
-    user = card_binding(frame.user, document["id"], "user")
-    project = card_binding(frame.project, document["id"], "project")
-    private = card_binding(frame.private, document["id"], "project-local")
-    binding = card_binding(frame.local, document["id"], frame.scope)
+    binding = card_binding(frame, document["id"], frame.scope)
     enabled, diagnostics = effective_enabled(frame, document["id"])
-    return {"supported": True, "kind": frame.item(identity)["kind"], "scope": frame.scope,
+    user = layer_state(frame, document["id"], "user", diagnostics)
+    project = layer_state(frame, document["id"], "project", diagnostics)
+    private = layer_state(frame, document["id"], "project-local", diagnostics)
+    result = {"supported": True, "kind": frame.item(identity)["kind"], "scope": frame.scope,
             "pluginId": document["id"], "documentId": document_identity(document),
             "name": subject["name"], "ref": subject["ref"], "version": subject["version"],
             "availability": subject["availability"],
             "contents": [{"id": member["id"], "name": contribution_name(member), "point": member.get("point"),
                           "ref": member.get("ref", document["id"] + "#" + member["id"])}
                          for member in document["contributions"]],
-            "userState": configured_state(user),
-            "projectState": configured_state(project) if frame.catalogs.project else None,
-            "sharedState": configured_state(project) if frame.catalogs.project else None,
-            "privateState": configured_state(private) if frame.catalogs.project else None,
-            "shared": project is not None,
+            "userState": user,
+            "projectState": project if frame.catalogs.project else None,
+            "sharedState": project if frame.catalogs.project else None,
+            "privateState": private if frame.catalogs.project else None,
+            "shared": bool(plugin_bindings(frame.project, document["id"])),
             "effectiveEnabled": enabled, "diagnostics": diagnostics,
             "configBaseline": deepcopy({"document": frame.local_definition(document), "binding": binding, "source": document})}
+    if result["kind"] == "hook":
+        native = observe_hook(frame, document)
+        result.update(nativeScope=native["scope"], nativeState=native["state"], nativeEnabled=native["enabled"], nativeHandlers=native["handlers"],
+                      pendingNativeState=native["request"]["enabled"] if native["request"] else None)
+        result["configBaseline"]["native"] = native["baseline"]
+        if native["state"] != "absent":
+            result["effectiveEnabled"] = native["enabled"]
+    return result
 
 
 # //// 从一次读取的来源和声明生成卡片管理状态 [@x380kkm 2026-09-07] ////
@@ -81,7 +95,7 @@ def card_inventory(frame: CardSubjects) -> dict:
             continue
         try:
             result["cardManagement"][identity] = card_management(frame, identity)
-        except CardError as error:
+        except (CardError, StorageError) as error:
             result["cardManagement"][identity] = {"supported": False, "kind": item["kind"], "scope": frame.scope,
                                                  "reason": str(error), "code": error.code}
     result["scope"] = frame.scope
@@ -121,16 +135,20 @@ class CardOperations:
             if current["binding"] is not None:
                 raise StorageConflictError(current["binding"]["id"])
             baseline = current
-        if not isinstance(baseline, dict) or set(baseline) != {"document", "binding", "source"}:
+        if not isinstance(baseline, dict) or set(baseline) != set(current):
             raise CardError("card_baseline", "启用修改需要卡片来源与本层绑定的读取基线.")
         if baseline["source"] != document:
             raise StorageConflictError(document_identity(document))
         if baseline["document"] != current["document"] or baseline["binding"] != current["binding"]:
             raise StorageConflictError(document_identity(baseline["binding"] or document))
+        if baseline.get("native") != current.get("native"):
+            raise StorageConflictError("host-hook-native-state")
+        if "native" in current and scope != "user" and state != "inherit" and hook_scope(frame, document) == "user":
+            raise CardError("host_inherited_hook_scope", "此 Hook 由用户配置提供, 请在用户配置中调整原生开关.")
         if scope == "project":
             project = CardSubjects(self.catalogs, self.codex, "project-local")
-            changed = configure_project(project, id, state)
-            return {**self.describe(id, scope), "changed": changed}
+            changed, saved = configure_project(project, id, state, current)
+            return self._configured_result(id, scope, changed, state, current, saved)
         plans = []
         previous = baseline["binding"]
         if state == "inherit":
@@ -138,13 +156,34 @@ class CardOperations:
                 plans.append(frame.store.preview_remove(previous["id"], previous))
         else:
             plans.extend(frame.source_plans([id]))
-            binding = usage_document(document, {"state": state}, previous, scope)
+            binding = configured_binding(frame, document, state, scope, previous)
             plans.append(frame.store.preview_put(binding, previous))
         if plans and current["document"] is not None and all(plan["id"] != document_identity(document) for plan in plans):
             plans.insert(0, frame.store.preview_put(current["document"], baseline["document"]))
-        results = frame.store.apply_many(plans) if plans else []
-        description = self.describe(id, scope)
-        return {**description, "changed": any(result["changed"] for result in results)}
+        # //// 在提交时确认快捷操作仍选择同一绑定 [@x380kkm 2026-09-10] ////
+        def verify_binding(documents):
+            if card_binding(frame, document["id"], scope, documents) != previous:
+                raise StorageConflictError(document["id"])
+
+        results = frame.store.apply_many(plans, verify_current=verify_binding) if plans else []
+        return self._configured_result(id, scope, any(result["changed"] for result in results), state, current,
+                                       binding if state != "inherit" else None)
+
+    # //// 返回声明保存结果与原生开关请求 [@x380kkm 2026-09-10] ////
+    def _configured_result(self, identity: str, scope: str, changed: bool, state: str, baseline: dict, binding: dict | None) -> dict:
+        result = {**self.describe(identity, scope), "changed": changed}
+        if state == "inherit" and binding is None and baseline["binding"] is None:
+            return result
+        if "native" in baseline:
+            binding_id = (binding or baseline["binding"] or {}).get("id", f"binding:{scope}/{result['management']['pluginId']}")
+            try:
+                save_hook_request(self.catalogs, self.codex.root, scope, result["management"]["ref"],
+                                  None if state == "inherit" else state == "enabled", baseline["native"], binding, binding_id)
+            except (StorageError, ValueError, OSError) as error:
+                result["hostSync"] = {"status": "blocked", "message": "声明已保存, 原生开关请求需要重新读取.",
+                                      "diagnostics": [{"code": getattr(error, "code", "host_hook_request"), "message": str(error)}]}
+            result.update(self.describe(identity, scope))
+        return result
 
     # //// 发布当前项目设置或转回私人维护 [@x380kkm 2026-09-07] ////
     def set_shared(self, id: str, shared: bool, baseline: dict | None = None) -> dict:

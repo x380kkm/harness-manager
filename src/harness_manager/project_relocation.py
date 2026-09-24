@@ -1,6 +1,8 @@
 # audience: internal
 # # project-relocation
-"""项目搬移重连个人目录并转换明确来源位置. 旧目录和宿主存档保留, 多目录保存失败按对象基线回滚."""
+"""项目搬移重连个人目录并转换明确来源位置. 各宿主独立选择关系来源, 搬移集合合并这些选择.
+旧目录和宿主存档保留, 多目录保存失败按对象基线回滚.
+"""
 from __future__ import annotations
 
 from contextlib import ExitStack
@@ -11,14 +13,17 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import NAMESPACE_URL, uuid5
 
 from .catalogs import Catalogs, document_locations, external_project_locations, portable_project_document, project_private_store
 from .card_relations import relation_payload
 from .card_sharing import reference_plugin
 from .card_subjects import CardError
+from .host_paths import project_host_storage
+from .host_profiles import CODEX, HostProfile
 from .host_storage import HostStorage, RECOVERY_STATES
-from .projection import project_content
+from .codex_inventory import CodexInventory
+from .project_hook_relocation import relocate_host_hooks
+from .projection import project_content, scope_may_match
 from .protocol import document_identity
 from .sharing_storage import apply_sharing
 from .storage import Store
@@ -87,13 +92,31 @@ def relation_source_diagnostics(documents: list[dict], plugins: set[str], diagno
             or any(note["subject"] == plugin or note["subject"].startswith((plugin + "#", plugin + "/")) for plugin in relations)]
 
 
-# //// 沿项目声明与选定的参考关系汇集来源身份 [@x380kkm 2026-09-08] ////
-def project_source_plugins(catalogs: Catalogs, documents: dict[str, list[dict]]) -> set[str]:
-    view = catalogs.effective(documents)
-    context = {"user": getpass.getuser(), **catalogs.context("project-local")}
+# //// 汇集内容读取和原生投放及声明指定的宿主 [@x380kkm 2026-09-10] ////
+def relocation_hosts(documents: list[dict]) -> list[str]:
+    hosts = {"codex", "harness-manager"}
+    for document in documents:
+        scopes = [document.get("target"), *(member.get("scope") for member in document.get("contributions", []))]
+        for scope in scopes:
+            selected = (scope or {}).get("selector", {}).get("host", [])
+            hosts.update(value for value in (selected if isinstance(selected, list) else [selected])
+                         if isinstance(value, str) and value and value != "current")
+    return sorted(hosts)
+
+
+# //// 沿同一宿主选定的参考关系汇集来源身份 [@x380kkm 2026-09-10] ////
+def host_source_plugins(view, documents: dict[str, list[dict]], context: dict) -> set[str]:
     entries, diagnostics = project_content(view.documents, context, layers=view.layers)
     relations = [(entry.owner["id"], payload) for entry in entries if (payload := relation_payload(entry.owner)) is not None]
-    linked = referenced_plugins([*documents["project"], *documents["project-local"]])
+    identities = {document_identity(value) for scope in ("project", "project-local") for value in documents[scope]}
+    location = {key: value for key, value in context.items() if key != "host"}
+    bindings = [value for value in view.documents if value["kind"] == "PluginBinding" and scope_may_match(value["target"], location)]
+    bound = {value["plugin"]["id"] for value in bindings}
+    applicable = {value["plugin"]["id"] for value in bindings if scope_may_match(value["target"], context)}
+    roots = [value for value in view.documents if document_identity(value) in identities
+             and (value["kind"] != "PluginBinding" or scope_may_match(value["target"], context))
+             and (value["kind"] != "Plugin" or value["id"] not in bound or value["id"] in applicable)]
+    linked = referenced_plugins(roots)
     while True:
         related = [value for value in documents["user"]
                    if value.get("id") in linked or value.get("plugin", {}).get("id") in linked]
@@ -107,6 +130,24 @@ def project_source_plugins(catalogs: Catalogs, documents: dict[str, list[dict]])
                 raise RelocationError("relocation_conflict", "项目参考关系的来源选择需要明确的范围与条件.", {"diagnostics": unresolved})
             return linked
         linked = discovered
+
+
+# //// 合并各宿主独立闭合的项目来源 [@x380kkm 2026-09-10] ////
+def project_source_plugins(catalogs: Catalogs, documents: dict[str, list[dict]]) -> set[str]:
+    view = catalogs.effective(documents)
+    context = {"user": getpass.getuser(), **catalogs.context("project-local")}
+    linked = set()
+    for host in relocation_hosts(view.documents):
+        linked.update(host_source_plugins(view, documents, {**context, "host": host}))
+    return linked
+
+
+# //// 将原项目的有效绑定对应到搬移后的保存值 [@x380kkm 2026-09-10] ////
+def relocated_bindings(originals: dict, desired: dict, old_private: list[dict]) -> dict:
+    sources = {**originals, "project-local": old_private}
+    return {scope: {value["id"]: (value, desired[scope].get(value["id"]))
+                    for value in sources[scope] if value["kind"] == "PluginBinding"}
+            for scope in ("user", "project", "project-local")}
 
 
 # //// 根据目标存储的身份规则建立对象集合 [@x380kkm 2026-09-08] ////
@@ -155,23 +196,23 @@ def relocation_recovery(error: CardError, old_private, old_host, stores) -> Relo
 
 
 # //// 按项目位置生成宿主存档入口 [@x380kkm 2026-09-08] ////
-def project_host(user_root: Path, project: Path) -> HostStorage:
-    return HostStorage(user_root, project, "codex-" + uuid5(NAMESPACE_URL, project.as_uri()).hex, config_subdir=".codex")
+def project_host(user_root: Path, project: Path, profile: HostProfile = CODEX) -> HostStorage:
+    return project_host_storage(user_root, project, CodexInventory(user_root).root, profile)
 
 
 # //// 从宿主存档恢复旧 Windows 目录的原始拼写 [@x380kkm 2026-09-08] ////
-def previous_project_host(user: Store, old: Path) -> HostStorage:
-    host = project_host(user.workspace, old)
+def previous_project_host(user: Store, old: Path, profile: HostProfile = CODEX) -> HostStorage:
+    host = project_host(user.workspace, old, profile)
     if not old.drive or host.store.catalog.exists():
         return host
     matches = []
-    for directory in sorted((user.directory / "hosts").glob("codex-*")):
+    for directory in sorted((user.directory / "hosts").glob(f"{profile.id}-*")):
         catalog = Store(user.workspace, document_identity, lambda value: None, catalog_directory=directory)
         locations = {value["targetRoot"] for value in catalog.snapshot()
-                     if value.get("configSubdir") == ".codex" and isinstance(value.get("targetRoot"), str)
+                     if value.get("configSubdir") == profile.config_subdir and isinstance(value.get("targetRoot"), str)
                      and Path(value["targetRoot"]) == old}
         for location in locations:
-            candidate = project_host(user.workspace, Path(location))
+            candidate = project_host(user.workspace, Path(location), profile)
             if candidate.store.catalog != catalog.catalog:
                 raise RelocationError("relocation_host_conflict", "旧位置宿主存档的目录身份与记录位置需要保持一致.")
             matches.append(candidate)
@@ -252,8 +293,12 @@ class ProjectRelocation:
             selected = sorted(source_ids)
         for identity in selected:
             desired["user"][identity] = relocated_user[identity]
+        binding_moves = relocated_bindings(originals, desired, old_documents)
         for value in host_documents:
             updated = {**deepcopy(value), **current_host.context}
+            if "hookStateRoot" not in value:
+                updated.pop("hookStateRoot", None)
+            updated = relocate_host_hooks(updated, old, current, binding_moves)
             identity = value["id"]
             if identity in desired["host"] and desired["host"][identity] != updated:
                 raise RelocationError("relocation_host_conflict", "当前位置已有不同的宿主恢复记录, 请先确认保留的记录.", {"recordId": identity})

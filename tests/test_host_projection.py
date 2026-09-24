@@ -235,6 +235,62 @@ class HostProjectionTests(unittest.TestCase):
                 self.assertIn("host_scope_adapter", {item["code"] for item in result["diagnostics"]})
                 self.assertTrue(all(item["severity"] == "error" for item in result["diagnostics"]))
 
+    # //// 其他宿主的限定绑定与成员保留当前宿主的独立编译 [@x380kkm 2026-09-10] ////
+    def test_other_host_scopes_do_not_block_current_host(self) -> None:
+        self.configure()
+        expected = self.compile()
+        binding = usage_document(self.module, {"state": "enabled"}, None, "user")
+        binding["id"] = "binding:manager-only"
+        for selector in ({"task": "review", "host": "harness-manager"},
+                         {"host": "harness-manager", "task": "review"}):
+            with self.subTest(selector=selector):
+                binding["target"]["selector"] = selector
+                self.save(binding)
+                self.assertEqual(self.compile(), expected)
+        member = deepcopy(self.module["contributions"][0])
+        member["id"] = "manager-rule"
+        member["scope"] = deepcopy(binding["target"])
+        self.module["contributions"].append(member)
+        self.save(self.module)
+        self.assertEqual(self.compile(), expected)
+
+    # //// 当前宿主的任务限定绑定保留载体适配诊断 [@x380kkm 2026-09-10] ////
+    def test_current_host_task_scope_requires_adapter(self) -> None:
+        self.configure()
+        binding = usage_document(self.module, {"state": "enabled"}, None, "user")
+        binding["target"]["selector"] = {"task": "review", "host": "codex"}
+        self.save(binding)
+        result = self.compile()
+        self.assertEqual(result["targets"], {})
+        self.assertIn("host_scope_adapter", {item["code"] for item in result["diagnostics"]})
+
+    # //// 项目编译先排除属于其他项目的任务绑定 [@x380kkm 2026-09-10] ////
+    def test_other_project_scopes_do_not_block_current_project(self) -> None:
+        self.configure(scope="project-local")
+        expected = self.compile("project-local")
+        binding = usage_document(self.module, {"state": "enabled"}, None, "project-local")
+        binding["id"] = "binding:other-project"
+        for selector in ({"task": "review", "project": self.library.as_uri()},
+                         {"project": self.library.as_uri(), "task": "review"}):
+            with self.subTest(selector=selector):
+                binding["target"]["selector"] = selector
+                self.save(binding)
+                self.assertEqual(self.compile("project-local"), expected)
+
+    # //// 引用链的宿主排除同时覆盖下层任务范围 [@x380kkm 2026-09-10] ////
+    def test_other_host_alias_does_not_require_target_adapter(self) -> None:
+        self.configure()
+        expected = self.compile()
+        rule = deepcopy(self.module["contributions"][0])
+        rule["scope"] = {"contract": {"id": "manager.scope", "range": "^1.0.0"}, "selector": {"task": "review"}}
+        other = {"apiVersion": "manager.x380kkm/v1", "kind": "Plugin", "id": "plugin:task-rule",
+                 "release": {"version": "local"}, "contributions": [rule]}
+        self.save(other)
+        self.module["contributions"].append({"id": "manager-alias", "ref": "plugin:task-rule#rule", "scope": {
+            "contract": {"id": "manager.scope", "range": "^1.0.0"}, "selector": {"host": "harness-manager"}}})
+        self.save(self.module)
+        self.assertEqual(self.compile(), expected)
+
     # //// Hook 与工具缺少载体映射时保留全部宿主文件 [@x380kkm 2026-09-07] ////
     def test_unsupported_carriers_block_partial_module_and_execute_nothing(self) -> None:
         hooks = self.codex.root / "hooks.json"
@@ -250,6 +306,57 @@ class HostProjectionTests(unittest.TestCase):
             self.assertEqual(result["targets"], {})
             self.assertIn("host_carrier_adapter", {item["code"] for item in result["diagnostics"]})
             self.assertEqual(hooks.read_bytes(), before)
+
+    # //// 明确排除的 Tool 保留规则与已管理载体的开闭输出 [@x380kkm 2026-09-10] ////
+    def test_excluded_tool_does_not_block_supported_carrier_reconciliation(self) -> None:
+        self.module["contributions"].append({"id": "tool", "point": "tool.x380kkm/endpoint",
+                                             "contract": {"id": "tool.x380kkm/endpoint", "range": "^1.0.0"},
+                                             "payload": {"name": "Tool", "command": "inspect"}})
+        self.module["contributions"].append({"id": "hook", "point": HOOK_POINT, "contract": {"id": HOOK_POINT, "range": "^1.0.0"},
+                                             "payload": {"event": "Stop", "handlers": [{"type": "command", "command": "inspect"}]}})
+        for selector in ({}, {"task": "review"}, {"agent": "reviewer"}):
+            with self.subTest(selector=selector):
+                self.module["contributions"][2]["scope"] = {"contract": {"id": "manager.scope", "range": "^1.0.0"}, "selector": selector}
+                self.configure(members={"tool": "exclude"})
+                enabled = self.compile()
+                self.assertEqual(enabled["diagnostics"], [])
+                self.assertIn(b"Keep existing names.", enabled["targets"]["AGENTS.override.md"])
+                self.assertEqual({item["ref"].partition("#")[2] for item in enabled["contributions"]}, {"rule", "skill", "hook"})
+                self.configure("disabled", members={"tool": "exclude"})
+                disabled = self.compile()
+                self.assertEqual(disabled["diagnostics"], [])
+                self.assertTrue(all(not item["enabled"] for item in disabled["contributions"]))
+                self.assertNotIn(b"Keep existing names.", disabled["targets"]["AGENTS.override.md"])
+                self.assertEqual(json.loads(disabled["targets"]["hooks.json"]), {"hooks": {}})
+
+    # //// 必需 Tool 的排除和已选未知载体都保留编译诊断 [@x380kkm 2026-09-10] ////
+    def test_required_excluded_tool_and_selected_unknown_contract_stay_blocked(self) -> None:
+        tool = {"id": "tool", "point": "tool.x380kkm/endpoint", "contract": {"id": "tool.x380kkm/endpoint", "range": "^1.0.0"},
+                "payload": {"name": "Tool"}, "criticality": {"default": "required"}}
+        self.module["contributions"].append(tool)
+        self.configure(members={"tool": "exclude"})
+        result = self.compile()
+        self.assertEqual(result["targets"], {})
+        self.assertIn("required_excluded", {item["code"] for item in result["diagnostics"]})
+        self.module["contributions"].pop()
+        self.module["contributions"][0]["contract"]["range"] = "^2.0.0"
+        self.configure()
+        result = self.compile()
+        self.assertEqual(result["targets"], {})
+        self.assertIn("host_carrier_adapter", {item["code"] for item in result["diagnostics"]})
+
+    # //// 整体关闭的 Tool 保留其他包中规则的独立部署 [@x380kkm 2026-09-10] ////
+    def test_disabled_tool_with_task_scope_preserves_other_rules(self) -> None:
+        self.configure()
+        expected = self.compile()
+        tools = {"apiVersion": "manager.x380kkm/v1", "kind": "Plugin", "id": "plugin:separate-tools", "release": {"version": "local"},
+                 "contributions": [{"id": "tool", "point": "tool.x380kkm/endpoint",
+                                    "contract": {"id": "tool.x380kkm/endpoint", "range": "^1.0.0"},
+                                    "scope": {"contract": {"id": "manager.scope", "range": "^1.0.0"}, "selector": {"task": "review"}},
+                                    "payload": {"name": "Tool"}}]}
+        self.save(tools)
+        self.save(usage_document(tools, {"state": "disabled"}, None, "user"))
+        self.assertEqual(self.compile(), expected)
 
     # //// 显式生命周期成员输出完整事件组并保持信任由宿主管理 [@x380kkm 2026-09-07] ////
     def test_hooks_compile_for_user_and_project_without_execution(self) -> None:

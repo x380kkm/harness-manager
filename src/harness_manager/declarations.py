@@ -65,30 +65,35 @@ class DeclarationIndex:
 
     # //// 解析组合成员及其完整引用链 [@x380kkm 2026-09-06] ////
     def resolve_reference(self, reference: str, constraint: str | None = None, *, origin: str | None = None) -> list[tuple[dict, dict]] | None:
+        chain, complete = self.resolve_reference_path(reference, constraint, origin=origin)
+        return chain if complete else None
+
+    # //// 保留解析失败前已经取得的引用声明 [@x380kkm 2026-09-10] ////
+    def resolve_reference_path(self, reference: str, constraint: str | None = None, *, origin: str | None = None) -> tuple[list[tuple[dict, dict]], bool]:
         chain: list[tuple[dict, dict]] = []
         visited: set[str] = set()
         while True:
             identifier, separator, local_id = reference.partition("#")
             if not separator:
                 diagnose(self.diagnostics, "invalid_reference", reference, "成员引用需要 Plugin 身份与局部 ID.", origin=origin)
-                return None
+                return chain, False
             plugin = self.resolve_plugin(identifier, [{"constraint": constraint}], origin=origin)
             if plugin is None:
-                return None
+                return chain, False
             identity = f"{document_identity(plugin)}#{local_id}"
             if identity in visited:
                 diagnose(self.diagnostics, "reference_cycle", reference, "组合成员引用形成循环.", origin=origin)
-                return None
+                return chain, False
             visited.add(identity)
             members = [item for item in plugin["contributions"] if item["id"] == local_id]
             if len(members) != 1:
                 diagnose(self.diagnostics, "missing_or_ambiguous_contribution", reference,
                          "成员引用需要匹配唯一的内容声明.", origin=origin)
-                return None
+                return chain, False
             member = members[0]
             chain.append((plugin, member))
             if "ref" not in member:
-                return chain
+                return chain, True
             reference, constraint = member["ref"], member.get("constraint")
 
 

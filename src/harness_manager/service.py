@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from .agent_interface import AgentInterface
 from .catalogs import Catalogs, resolve_document
-from .card_operations import CardOperations, card_inventory
+from .card_operations import CardOperations, card_inventory, layer_state
 from .card_subjects import CardSubjects
 from .card_collections import collections_from_view, validate_shared_collections
 from .codex_inventory import CodexInventory
@@ -26,14 +26,15 @@ from .projection import discover, project_content
 from .read_statistics import ReadStatistics
 from .module_inventory import modules_from_view
 from .inventory_groups import group_inventory
-from .host_control import HostControl
+from .host_control import HostControl, HostRouter
+from .host_profiles import CLAUDE, CODEX, host_root
 from .module_operations import ModuleOperations
 from .project_relocation import ProjectRelocation
 from .protocol import document_identity, document_name, schema
 from .rule_editing import describe_rule
 from .sources import SourceReader
 from .storage_errors import StorageConflictError, StorageError
-from .usage import describe_usage, find_plugin, usage_document
+from .usage import describe_usage, find_plugin, selected_releases, usage_document
 
 
 # //// 对外管理错误保存结构化诊断 [@x380kkm 2026-09-06] ////
@@ -64,6 +65,11 @@ class Manager:
         self.cards = CardOperations(self.catalogs, self.codex)
         self.statistics = ReadStatistics(self.store.workspace)
         self.host = HostControl(self.catalogs, self.codex, self.reader)
+        self.hosts = HostRouter({
+            CODEX.id: self.host,
+            CLAUDE.id: HostControl(self.catalogs, self.codex, self.reader, CLAUDE,
+                                   host_root(CLAUDE, self.store.workspace)),
+        })
         self.modules = ModuleOperations(self.catalogs, self.codex)
         self.relocation = ProjectRelocation(self.catalogs)
         self.agent = AgentInterface(self)
@@ -88,13 +94,17 @@ class Manager:
         frame = CardSubjects(self.catalogs, self.codex, scope)
         result = card_inventory(frame)
         modules, edges, notes = modules_from_view(frame.view, scope, result["items"], frame.store.catalog)
-        local_bindings = {document["plugin"]["id"]: document for document in frame.local
-                          if document["kind"] == "PluginBinding" and document["id"] == f"binding:{scope}/{document['plugin']['id']}"}
+        releases, release_diagnostics = selected_releases(frame.view, frame.context)
+        notes.extend(note for note in release_diagnostics if note not in notes)
         for module in modules:
-            binding = local_bindings.get(module["details"]["pluginId"])
-            module["details"]["configuredState"] = "inherit" if binding is None or "enabled" not in binding else "enabled" if binding["enabled"] else "disabled"
+            details = module["details"]
+            configured = layer_state(frame, details["pluginId"], scope, notes)
+            selected = releases.get(details["pluginId"])
+            if details["pluginId"] in releases and selected != details["documentId"]:
+                configured = "inherit" if selected is not None else None
+            details["configuredState"] = configured
         view = frame.view
-        projected, _ = project_content(view.documents, self.content_context(None, scope), layers=view.layers)
+        projected, _ = project_content(view.documents, frame.context, layers=view.layers)
         module_names = {module["details"]["pluginId"]: module["name"] for module in modules}
         used_by = {}
         for entry in projected:
@@ -105,7 +115,7 @@ class Manager:
             uses = used_by.get(managed.get("ref"), {})
             uses = {key: value for key, value in uses.items() if key != managed.get("pluginId")}
             managed["moduleUses"] = [{"id": key, "name": value} for key, value in uses.items()]
-            if uses:
+            if uses and managed.get("kind") != "hook":
                 managed["effectiveEnabled"] = True
         result["items"].extend(modules)
         result["edges"].extend(edges)
@@ -353,7 +363,9 @@ class Manager:
     # //// 直接列出当前范围可使用的 Skill 摘要 [@x380kkm 2026-09-09] ////
     def list_skills(self, context: dict | None = None, query: str = "", limit: int = 20, cursor: int = 0,
                     scope: str = "user") -> dict:
-        return self.discover_content(context or {"host": "harness-manager"}, query, limit, cursor, scope,
+        target = self.content_context(context, scope)
+        target.setdefault("host", "harness-manager")
+        return self.discover_content(target, query, limit, cursor, scope,
                                      point="skill.x380kkm/deployment", detail="summary")
 
     # //// 取得方法与有效配套内容的完整读取快照 [@x380kkm 2026-09-06] ////
@@ -456,8 +468,10 @@ class Manager:
         return {
             "agent.capabilities": self.agent.capabilities, "agent.help": self.agent.help,
             "project.relocate_preview": self.relocation.preview, "project.relocate_apply": self.relocation.apply,
-            "host.initialize": self.host.initialize, "host.status": self.host.status, "host.inspect": self.host.inspect, "host.set_enabled": self.host.set_enabled,
-            "host.preview": self.host.preview, "host.preview_restore": self.host.preview_restore, "host.apply": self.host.apply,
+            "host.initialize": self.hosts.initialize, "host.status": self.hosts.status,
+            "host.inspect": self.hosts.inspect, "host.set_enabled": self.hosts.set_enabled,
+            "host.preview": self.hosts.preview, "host.preview_restore": self.hosts.preview_restore,
+            "host.apply": self.hosts.apply,
             "module.describe": self.modules.describe, "module.preview": self.modules.preview, "module.apply": self.modules.apply,
             "card.inventory": self.snapshot_cards, "card.describe": self.cards.describe,
             "card.configure": self.cards.configure, "card.relations": self.cards.relations,
@@ -495,5 +509,11 @@ class Manager:
             scope = arguments.get("scope", arguments.get("plan", {}).get("scope", result.get("scope", "user")))
             if method == "card.set_shared" or scope == "project":
                 scope = "project-local"
-            result["hostSync"] = self.host.synchronize_active_scopes(scope)
+            try:
+                if result.get("hostSync", {}).get("status") != "blocked":
+                    result["hostSync"] = self.host.synchronize_active_scopes(scope)
+            except (StorageError, ValueError, OSError) as error:
+                result["hostSync"] = self.host._synchronization_failure(scope, error)
+            if method == "card.configure":
+                result.update(self.cards.describe(arguments["id"], arguments.get("scope", "user")))
         return result

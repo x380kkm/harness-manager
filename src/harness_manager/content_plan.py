@@ -8,7 +8,8 @@ from dataclasses import dataclass, field
 from .content import ContentError
 from .declarations import matches_version
 from .projection import ProjectedContent, ScopedValue, contains_path, project_selection, resolve_scope, resolve_values
-from .module_contexts import module_contexts
+from .module_contexts import included_modules, module_contexts
+from .protocol import document_identity
 
 INSTRUCTION_POINT = "context.x380kkm/instruction"
 PREFERENCE_POINT = "preference.x380kkm/method"
@@ -114,6 +115,33 @@ def matches_context(member: dict, references: set[str]) -> bool:
     return isinstance(payload, dict) and any(isinstance(payload.get(key), str) and payload[key] in references for key in ("skill", "subject"))
 
 
+# //// 为参与读取的内容选择任务说明与模块偏好 [@x380kkm 2026-09-10] ////
+def companion_entries(content: ProjectedContent, projected: list[ProjectedContent],
+                      derived: list[ProjectedContent]) -> list[PlannedEntry]:
+    references = {item["ref"] for item in content.summary["reference_chain"]}
+    modules = included_modules([content])
+    entries = [PlannedEntry(entry, "task-context") for entry in projected
+               if entry.member["point"] == TASK_CONTEXT_POINT and matches_context(entry.member, references)]
+    entries.extend(PlannedEntry(entry, "preference") for entry in derived
+                   if entry.member["point"] == PREFERENCE_POINT
+                   and (entry.summary["plugin"], entry.summary["version"]) in modules)
+    return entries
+
+
+# //// 按直接引用和同模块别名选择必需内容的使用入口 [@x380kkm 2026-09-10] ////
+def requirement_candidates(projected: list[ProjectedContent], target: str,
+                           dependent: ProjectedContent) -> list[ProjectedContent]:
+    direct = [candidate for candidate in projected if candidate.summary["ref"] == target]
+    if direct:
+        return direct
+    aliases = [candidate for candidate in projected if candidate.summary["content"] == target
+               or any(reference["ref"] == target for reference in candidate.summary["reference_chain"])]
+    module = (dependent.summary["plugin"], dependent.summary["version"])
+    local = [candidate for candidate in aliases
+             if (candidate.summary["plugin"], candidate.summary["version"]) == module]
+    return local or aliases
+
+
 # //// 汇集当前使用的完整入口与强内容依赖 [@x380kkm 2026-09-06] ////
 def plan_content(documents: list[dict], context: dict, ref: str, version: str | None,
                  resources: list[str], *, layers: dict[str, int] | None = None) -> ContentPlan:
@@ -126,17 +154,13 @@ def plan_content(documents: list[dict], context: dict, ref: str, version: str | 
         raise
     if selected.member["point"] != SKILL_POINT:
         raise ContentError("content_method_required", "完整方法读取需要 Skill 入口; 单独内容可通过单元读取接口查看.")
-    references = {entry["ref"] for entry in selected.summary["reference_chain"]}
     instructions = select_instructions([entry for entry in projected if entry.member["point"] == INSTRUCTION_POINT], context, diagnostics)
     planned = [PlannedEntry(entry, "instruction") for entry in instructions]
     planned.extend(PlannedEntry(entry, "preference") for entry in projected if entry.member["point"] == PREFERENCE_POINT)
     planned.append(PlannedEntry(selected, "method", resources))
-    derived = module_contexts(projected, included=[entry.content for entry in planned])
-    projected.extend(derived)
-    planned.extend(PlannedEntry(entry, "preference") for entry in derived if entry.member["point"] == PREFERENCE_POINT)
-    references.update(item["ref"] for entry in planned for item in entry.content.summary["reference_chain"])
-    planned.extend(PlannedEntry(entry, "task-context") for entry in projected
-                   if entry.member["point"] == TASK_CONTEXT_POINT and matches_context(entry.member, references))
+    derived = module_contexts(projected)
+    projected = [*projected, *derived]
+    references = set()
     missing = []
     seen: dict[tuple[str, str], PlannedEntry] = {}
     entries = []
@@ -153,6 +177,8 @@ def plan_content(documents: list[dict], context: dict, ref: str, version: str | 
             raise ContentError("content_use_contract", "当前内容用途的版本需要对应读取契约.", contract)
         entry.resources = list(dict.fromkeys([*entry.resources, *required_resources(entry.content.member)]))
         entries.append(entry)
+        references.update(item["ref"] for item in summary["reference_chain"])
+        planned.extend(companion_entries(entry.content, projected, derived))
         payload = entry.content.member["payload"]
         if isinstance(payload, dict) and payload.get("when"):
             raise ContentError("content_condition_unresolved", "当前内容的加载条件需要对应契约解释.", {"ref": summary["ref"]})
@@ -162,17 +188,19 @@ def plan_content(documents: list[dict], context: dict, ref: str, version: str | 
             if requirement["strength"] != "required" or "#" not in requirement["target"]:
                 continue
             target = requirement["target"]
-            matches = [candidate for candidate in projected if candidate.summary["ref"] == target]
+            matches = requirement_candidates(projected, target, entry.content)
             if len(matches) != 1 or requirement.get("when") or requirement.get("resolver"):
                 missing.append(target)
                 diagnostics.append(content_diagnostic("content.required-reference-unavailable", target,
                                                       "必需内容引用在当前范围中缺少唯一可读取结果."))
             else:
                 planned.append(PlannedEntry(matches[0], "reference"))
+    participating = {document_identity(owner) for entry in entries for owner, _ in entry.content.chain}
     for unavailable in projection.unavailable:
         member = unavailable.chain[-1][1]
-        point = member["point"]
-        if point in {INSTRUCTION_POINT, PREFERENCE_POINT} or point == TASK_CONTEXT_POINT and matches_context(member, references):
+        point = member.get("point")
+        unresolved = point is None and any(document_identity(owner) in participating for owner, _ in unavailable.chain)
+        if unresolved or point in {INSTRUCTION_POINT, PREFERENCE_POINT} or point == TASK_CONTEXT_POINT and matches_context(member, references):
             missing.append(unavailable.reference)
     normalized = [item if "severity" in item else content_diagnostic(item["code"], item["subject"], item["message"], "warning")
                   for item in diagnostics]

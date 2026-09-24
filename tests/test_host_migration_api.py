@@ -6,6 +6,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -54,6 +55,14 @@ class HostMigrationApiTests(unittest.TestCase):
         preview = self.manager.invoke("host.preview_restore", {"id": identity})
         return self.manager.invoke("host.apply", {"plan_id": preview["planId"]})
 
+    # //// 读取当前原生事件组的逐项启用状态 [@x380kkm 2026-09-10] ////
+    def hook_states(self):
+        configuration = self.host / "config.toml"
+        config = tomllib.loads(configuration.read_text(encoding="utf-8")) if configuration.exists() else {}
+        states = config.get("hooks", {}).get("state", {})
+        return [states.get(f"{self.hooks}:pre_tool_use:{index}:0", {}).get("enabled", True)
+                for index, _ in enumerate(self.groups)]
+
     # //// 分次关闭与解除 Hook 卡片保持原始执行次序 [@x380kkm 2026-09-08] ////
     def test_hook_cards_preserve_sequential_migration_and_release(self):
         identities = []
@@ -69,11 +78,14 @@ class HostMigrationApiTests(unittest.TestCase):
             identities.append(next(item["id"] for item in inventory["items"]
                                    if item.get("details", {}).get("sourceDeclaration") == document["id"] + "@local"))
             self.assertEqual(self.configure(identities[-1], "disabled")["hostSync"]["status"], "applied")
-        self.assertEqual(json.loads(self.hooks.read_text(encoding="utf-8"))["hooks"]["PreToolUse"], self.groups[2:])
+        self.assertEqual(json.loads(self.hooks.read_text(encoding="utf-8"))["hooks"]["PreToolUse"], self.groups)
+        self.assertEqual(self.hook_states(), [False, False, True])
         self.assertEqual(self.configure(identities[0], "inherit")["hostSync"]["status"], "applied")
-        self.assertEqual(json.loads(self.hooks.read_text(encoding="utf-8"))["hooks"]["PreToolUse"], [self.groups[0], self.groups[2]])
+        self.assertEqual(json.loads(self.hooks.read_text(encoding="utf-8"))["hooks"]["PreToolUse"], self.groups)
+        self.assertEqual(self.hook_states(), [True, False, True])
         self.assertEqual(self.configure(identities[1], "inherit")["hostSync"]["status"], "applied")
         self.assertEqual(json.loads(self.hooks.read_text(encoding="utf-8")), {"extra": "retained", "hooks": {"PreToolUse": self.groups}})
+        self.assertEqual(self.hook_states(), [True, True, True])
         self.assertNotIn("hooks", self.manager.host.storage("user").read_ownership())
 
     # //// 保存期间原文被外部修改则保留编辑并显示宿主阻止结果 [@x380kkm 2026-09-08] ////

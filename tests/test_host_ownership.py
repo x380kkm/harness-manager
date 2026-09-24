@@ -14,8 +14,10 @@ from harness_manager.host_ownership import HOOK_POINT, reconcile
 from harness_manager.storage_errors import StorageConflictError, StorageValidationError
 
 
-# //// 将内存文件内容包装为宿主捕获基线 [@x380kkm 2026-09-07] ////
+# //// 将内存文件及原生开关配置包装为宿主捕获基线 [@x380kkm 2026-09-10] ////
 def baseline(files: dict) -> dict:
+    files = dict(files)
+    files.setdefault("config.toml", None)
     return {name: base64.b64encode(value).decode("ascii") if value is not None else None for name, value in files.items()}
 
 
@@ -40,6 +42,14 @@ class HostOwnershipTests(unittest.TestCase):
         with patch.object(Path, "read_bytes", side_effect=AssertionError("filesystem access")), \
                 patch.object(Path, "resolve", side_effect=AssertionError("filesystem resolution")):
             return reconcile(targets, contributions, baseline(files), ownership, self.root)
+
+    # //// 按当前事件组位置读取原生处理器开关 [@x380kkm 2026-09-10] ////
+    def native_enabled(self, files: dict) -> list[bool]:
+        config = tomllib.loads((files.get("config.toml") or b"").decode())
+        states = config.get("hooks", {}).get("state", {})
+        groups = json.loads(files["hooks.json"])["hooks"]["PostToolUse"]
+        return [states.get(f"{self.root / 'hooks.json'}:post_tool_use:{index}:0", {}).get("enabled", True)
+                for index, _ in enumerate(groups)]
 
     # //// 指令失去最后绑定时恢复原文件或原不存在状态 [@x380kkm 2026-09-07] ////
     def test_rules_restore_original_bytes_and_check_external_edits(self) -> None:
@@ -163,23 +173,24 @@ class HostOwnershipTests(unittest.TestCase):
         combined["description"] = "User edit"
         later = hook("external-two", "later-command")["hook"]["group"]
         combined["hooks"]["PostToolUse"].append(later)
-        restored, final = self.reconcile({}, [], {"hooks.json": json.dumps(combined).encode()}, json.loads(json.dumps(ownership)))
+        restored, final = self.reconcile({}, [], {**targets, "hooks.json": json.dumps(combined).encode()}, json.loads(json.dumps(ownership)))
         result = json.loads(restored["hooks.json"])
         self.assertEqual(result["hooks"]["PostToolUse"], [external, later])
         self.assertEqual(result["description"], "User edit")
         self.assertEqual(result["extra"], {"preserve": True})
         self.assertEqual(final, {})
 
-    # //// Hook 关闭或移除绑定时恢复新文件的原不存在状态 [@x380kkm 2026-09-07] ////
-    def test_hook_disable_removes_only_owned_new_file(self) -> None:
+    # //// Hook 关闭保留定义并在解除绑定后清理新文件 [@x380kkm 2026-09-10] ////
+    def test_hook_disable_retains_definition_and_release_removes_new_file(self) -> None:
         entry = hook("plugin:one#hook", "managed-command")
         targets, ownership = self.reconcile({"hooks.json": b'{"hooks":{}}'}, [entry], {"hooks.json": None}, {})
         disabled = {**entry, "enabled": False}
         cleared, final = self.reconcile({"hooks.json": b'{"hooks":{}}'}, [disabled], targets, ownership)
-        self.assertEqual(cleared, {"hooks.json": None})
-        self.assertFalse(final["hooks"]["groups"][0]["enabled"])
+        self.assertEqual(cleared["hooks.json"], targets["hooks.json"])
+        self.assertEqual(self.native_enabled(cleared), [False])
+        self.assertFalse(final["hookState"]["groups"][0]["enabled"])
         removed, final = self.reconcile({}, [], targets, ownership)
-        self.assertEqual(removed, {"hooks.json": None})
+        self.assertEqual(removed, {"hooks.json": None, "config.toml": None})
         self.assertEqual(final, {})
 
     # //// 原生 Hook 关闭和来源交接后恢复原组与位置 [@x380kkm 2026-09-08] ////
@@ -192,14 +203,17 @@ class HostOwnershipTests(unittest.TestCase):
         self.assertEqual(targets["hooks.json"], original)
         self.assertEqual(ownership["hooks"]["groups"][0]["beforeIndex"], 1)
         disabled, final = self.reconcile({"hooks.json": b'{"hooks":{}}'}, [{**entry, "enabled": False}], targets, ownership)
-        self.assertEqual(json.loads(disabled["hooks.json"])["hooks"]["PostToolUse"], [external, after])
+        self.assertEqual(disabled["hooks.json"], original)
+        self.assertEqual(self.native_enabled(disabled), [True, False, True])
         replacement = {**entry, "ref": "plugin:replacement#hook", "enabled": False}
         disabled, final = self.reconcile({"hooks.json": b'{"hooks":{}}'}, [replacement], disabled, final)
         edited = json.loads(disabled["hooks.json"])
         edited["metadata"] = "later edit"
-        released, remaining = self.reconcile({}, [], {"hooks.json": json.dumps(edited).encode()}, final)
+        self.assertEqual(self.native_enabled(disabled), [True, False, True])
+        released, remaining = self.reconcile({}, [], {**disabled, "hooks.json": json.dumps(edited).encode()}, final)
         self.assertEqual(json.loads(released["hooks.json"])["hooks"], json.loads(original)["hooks"])
         self.assertEqual(json.loads(released["hooks.json"])["metadata"], "later edit")
+        self.assertEqual(self.native_enabled(released), [True, True, True])
         self.assertEqual(remaining, {})
 
     # //// 编辑和交接原生 Hook 保持启用状态与原序并在解除后恢复原组 [@x380kkm 2026-09-08] ////
@@ -213,18 +227,21 @@ class HostOwnershipTests(unittest.TestCase):
                 targets, ownership = self.reconcile({"hooks.json": b"{}"}, [entry], {"hooks.json": json.dumps(original).encode()}, {})
                 edited = hook(entry["ref"], "edited-command", enabled)
                 targets, ownership = self.reconcile({"hooks.json": b"{}"}, [edited], targets, json.loads(json.dumps(ownership)))
-                expected = [left, edited["hook"]["group"], right] if enabled else [left, right]
+                expected = [left, edited["hook"]["group"], right]
                 self.assertEqual(json.loads(targets["hooks.json"])["hooks"]["PostToolUse"], expected)
+                self.assertEqual(self.native_enabled(targets), [True, enabled, True])
                 toggled = {**edited, "ref": "plugin:replacement#hook", "enabled": not enabled}
                 targets, ownership = self.reconcile({"hooks.json": b"{}"}, [toggled], targets, ownership)
-                expected = [left, right] if enabled else [left, edited["hook"]["group"], right]
                 self.assertEqual(json.loads(targets["hooks.json"])["hooks"]["PostToolUse"], expected)
+                self.assertEqual(self.native_enabled(targets), [True, not enabled, True])
                 returned = {**entry, "ref": "plugin:returned#hook", "enabled": not enabled}
                 targets, ownership = self.reconcile({"hooks.json": b"{}"}, [returned], targets, ownership)
-                expected = [left, right] if enabled else original["hooks"]["PostToolUse"]
+                expected = original["hooks"]["PostToolUse"]
                 self.assertEqual(json.loads(targets["hooks.json"])["hooks"]["PostToolUse"], expected)
+                self.assertEqual(self.native_enabled(targets), [True, not enabled, True])
                 restored, released = self.reconcile({}, [], targets, ownership)
                 self.assertEqual(json.loads(restored["hooks.json"]), original)
+                self.assertEqual(self.native_enabled(restored), [True, True, True])
                 self.assertEqual(released, {})
 
     # //// 共享来源交接已编辑组后按直接引用恢复原生组 [@x380kkm 2026-09-08] ////
@@ -246,6 +263,7 @@ class HostOwnershipTests(unittest.TestCase):
                          [native["hook"]["group"], second["hook"]["group"]])
         restored, released = self.reconcile({}, [], targets, ownership)
         self.assertEqual(json.loads(restored["hooks.json"]), original)
+        self.assertEqual(self.native_enabled(restored), [True])
         self.assertEqual(released, {})
 
     # //// 原生 Hook 的共享引用分开编辑后保留同一恢复来源 [@x380kkm 2026-09-08] ////
@@ -257,9 +275,11 @@ class HostOwnershipTests(unittest.TestCase):
         edited = hook(first["ref"], "edited", False)
         targets, ownership = self.reconcile({"hooks.json": b"{}"}, [edited, second], targets, ownership)
         targets, ownership = self.reconcile({"hooks.json": b"{}"}, [second], targets, ownership)
-        self.assertEqual(json.loads(targets["hooks.json"])["hooks"]["PostToolUse"], [])
+        self.assertEqual(json.loads(targets["hooks.json"])["hooks"]["PostToolUse"], [second["hook"]["group"]])
+        self.assertEqual(self.native_enabled(targets), [False])
         restored, released = self.reconcile({}, [], targets, ownership)
         self.assertEqual(json.loads(restored["hooks.json"]), original)
+        self.assertEqual(self.native_enabled(restored), [True])
         self.assertEqual(released, {})
 
     # //// 连续编辑接管多个原生组后按各自原序恢复 [@x380kkm 2026-09-08] ////
@@ -269,9 +289,11 @@ class HostOwnershipTests(unittest.TestCase):
         original = {"hooks": {"PostToolUse": [first["hook"]["group"], second["hook"]["group"]]}}
         targets, ownership = self.reconcile({"hooks.json": b"{}"}, [first], {"hooks.json": json.dumps(original).encode()}, {})
         targets, ownership = self.reconcile({"hooks.json": b"{}"}, [second], targets, ownership)
-        self.assertEqual(json.loads(targets["hooks.json"])["hooks"]["PostToolUse"], [])
+        self.assertEqual(json.loads(targets["hooks.json"])["hooks"]["PostToolUse"], [second["hook"]["group"]])
+        self.assertEqual(self.native_enabled(targets), [False])
         restored, _ = self.reconcile({}, [], targets, ownership)
         self.assertEqual(json.loads(restored["hooks.json"]), original)
+        self.assertEqual(self.native_enabled(restored), [True, True])
 
     # //// 编辑事件名称后解除管理恢复原事件并清理生成事件 [@x380kkm 2026-09-08] ////
     def test_changed_hook_event_restores_original_event_on_release(self) -> None:
@@ -295,9 +317,11 @@ class HostOwnershipTests(unittest.TestCase):
         original = {"hooks": {"PostToolUse": [first["hook"]["group"], external, second["hook"]["group"]]}}
         targets, ownership = self.reconcile({"hooks.json": b'{"hooks":{}}'}, [second, first],
                                             {"hooks.json": json.dumps(original).encode()}, {})
-        self.assertEqual(json.loads(targets["hooks.json"])["hooks"]["PostToolUse"], [external])
+        self.assertEqual(json.loads(targets["hooks.json"]), original)
+        self.assertEqual(self.native_enabled(targets), [False, True, False])
         restored, remaining = self.reconcile({}, [], targets, ownership)
         self.assertEqual(json.loads(restored["hooks.json"]), original)
+        self.assertEqual(self.native_enabled(restored), [True, True, True])
         self.assertEqual(remaining, {})
 
     # //// 新增组的精简归属记录沿用其原不存在状态 [@x380kkm 2026-09-08] ////
@@ -308,7 +332,7 @@ class HostOwnershipTests(unittest.TestCase):
         del record["beforeIndex"]
         del record["enabled"]
         restored, final = self.reconcile({}, [], targets, ownership)
-        self.assertEqual(restored, {"hooks.json": None})
+        self.assertEqual(restored, {"hooks.json": None, "config.toml": None})
         self.assertEqual(final, {})
 
     # //// 同一 Hook 组的多个来源只产生一次宿主执行 [@x380kkm 2026-09-07] ////
@@ -331,11 +355,12 @@ class HostOwnershipTests(unittest.TestCase):
         altered = json.loads(targets["hooks.json"])
         altered["hooks"]["PostToolUse"][0]["hooks"][0]["command"] = "user-command"
         with self.assertRaises(StorageConflictError):
-            self.reconcile({}, [], {"hooks.json": json.dumps(altered).encode()}, ownership)
+            self.reconcile({}, [], {**targets, "hooks.json": json.dumps(altered).encode()}, ownership)
         duplicated = json.loads(targets["hooks.json"])
         duplicated["hooks"]["PostToolUse"].append(entry["hook"]["group"])
         with self.assertRaises(StorageConflictError):
-            self.reconcile({}, [], {"hooks.json": json.dumps(duplicated).encode()}, ownership)
+            self.reconcile({}, [], {**targets, "hooks.json": json.dumps(duplicated).encode()}, ownership)
         disabled, inactive = self.reconcile({"hooks.json": b'{"hooks":{}}'}, [{**entry, "enabled": False}], targets, ownership)
+        self.assertEqual(self.native_enabled(disabled), [False])
         with self.assertRaises(StorageConflictError):
-            self.reconcile({}, [], targets, inactive)
+            self.reconcile({}, [], {**disabled, "hooks.json": json.dumps(altered).encode()}, inactive)

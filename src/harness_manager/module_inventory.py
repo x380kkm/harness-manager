@@ -11,7 +11,7 @@ from .card_subjects import member_path, source_record
 from .catalogs import Catalogs, CatalogView
 from .content_plan import INSTRUCTION_POINT, PREFERENCE_POINT, SKILL_POINT, TASK_CONTEXT_POINT
 from .declarations import DeclarationIndex, contribution_name, index_declarations
-from .module_contexts import PRESENTATION_CONTRACT, module_presentation
+from .module_contexts import module_presentation
 from .protocol import document_identity, document_name
 
 POINT_KINDS = {SKILL_POINT: "skill", INSTRUCTION_POINT: "rule", PREFERENCE_POINT: "rule",

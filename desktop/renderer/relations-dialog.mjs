@@ -37,7 +37,9 @@ export function createRelationsDialog({ run, onSaved, onDirty, setStatus }) {
     initialText = edge?.text || `使用本 skill 时可以参考使用 **${sides.to.name}** skill`;
     element('relation-text').value = initialText;
     element('relation-title').textContent = `${sides.from.name} → ${sides.to.name}`;
-    element('relation-origin').textContent = edge ? `${edge.scope === 'user' ? '用户级' : edge.scope === 'project' ? '项目共享' : '仅自己使用'}${edge.inherited ? ' / 继承' : ''}` : '新关系';
+    const scopes = { user: '用户级', project: '项目共享', 'project-local': '仅自己使用' };
+    element('relation-origin').textContent = edge ? `${scopes[edge.scope]}${edge.inherited ? ' / 继承' : ''}`
+      + (edge.sourceScope && edge.sourceScope !== edge.scope ? ` / 正文: ${scopes[edge.sourceScope]} (${edge.sourceVersion})` : '') : '新关系';
     element('relation-editor').hidden = false;
     element('relation-save').disabled = false;
     element('relation-inherit').hidden = description.scope === 'user' || !edge || edge.inherited;
