@@ -35,6 +35,34 @@ def make_binding(identifier: str, plugin: dict, selector: dict, **values: object
 
 # //// 验证目标选择与引用合成 [@x380kkm 2026-09-06] ////
 class ProjectionTests(unittest.TestCase):
+    # //// 同层数组选项的布尔值与数字差异产生明确冲突 [@x380kkm 2026-09-10] ////
+    def test_nested_option_value_conflict_is_not_resolved_by_binding_order(self) -> None:
+        plugin = make_plugin()
+        for left, right in (([False], [0]), ([{"flag": True}], [{"flag": 1}])):
+            for first, second in ((left, right), (right, left)):
+                bindings = [make_binding("binding:first", plugin, {}, options={"flags": first}),
+                            make_binding("binding:second", plugin, {}, options={"flags": second})]
+                result = discover([plugin, *bindings], {})
+                self.assertEqual(result["candidates"], [])
+                self.assertIn("binding_conflict", {note["code"] for note in result["diagnostics"]})
+
+    # //// 本地来源版本与语义发布按各自约束独立选择 [@x380kkm 2026-09-10] ////
+    def test_local_and_semantic_releases_preserve_explicit_selection(self) -> None:
+        release = make_plugin()
+        for local_version in ("local", "local:project"):
+            local = make_plugin(version=local_version)
+            binding = make_binding("binding:versions", release, {})
+            for constraint, expected in (("1.0.0", "1.0.0"), ("^1.0.0", "1.0.0"), (local_version, local_version)):
+                with self.subTest(local=local_version, constraint=constraint):
+                    binding["plugin"]["constraint"] = constraint
+                    result = discover([release, local, binding], {})
+                    self.assertEqual([item["version"] for item in result["candidates"]], [expected])
+                    self.assertEqual(result["diagnostics"], [])
+            binding["plugin"]["constraint"] = "not a version range"
+            result = discover([local, release, binding], {})
+            self.assertEqual(result["candidates"], [])
+            self.assertEqual({item["code"] for item in result["diagnostics"]}, {"unknown_version_constraint"})
+
     # //// 仅向已绑定且适用的目标返回候选 [@x380kkm 2026-09-06] ////
     def test_scope_isolation_and_catalog_only_content(self) -> None:
         plugin = make_plugin()
@@ -46,6 +74,46 @@ class ProjectionTests(unittest.TestCase):
             with self.subTest(changes=changes):
                 self.assertEqual(discover([plugin, binding], target | changes)["candidates"], [])
         self.assertEqual(discover([plugin], target)["candidates"], [])
+
+    # //// 明确不匹配的字段先于缺少上下文的字段排除范围 [@x380kkm 2026-09-10] ////
+    def test_excluded_scope_suppresses_missing_context_in_any_selector_order(self) -> None:
+        plugin = make_plugin()
+        for key, selection, actual in (("host", "harness-manager", "codex"),
+                                        ("project", "other", "current-project"),
+                                        ("task", "writing", "review")):
+            for selector in ({"agent": "worker", key: selection}, {key: selection, "agent": "worker"}):
+                with self.subTest(selector=selector):
+                    binding = make_binding("binding:other", plugin, selector)
+                    result = discover([plugin, binding], {key: actual})
+                    self.assertEqual(result["candidates"], [])
+                    self.assertEqual(result["diagnostics"], [])
+                    applicable = discover([plugin, binding], {key: selection})
+                    self.assertEqual({item["code"] for item in applicable["diagnostics"]}, {"missing_context"})
+
+    # //// 引用链中已排除的别名保留目标成员的上下文独立性 [@x380kkm 2026-09-10] ////
+    def test_excluded_alias_does_not_require_its_target_context(self) -> None:
+        plugin = make_plugin()
+        plugin["contributions"][0]["scope"] = {
+            "contract": {"id": "manager.scope", "range": "^1.0.0"}, "selector": {"task": "review"}}
+        wrapper = make_plugin("plugin:wrapper")
+        wrapper["contributions"] = [{"id": "alias", "ref": f"{plugin['id']}#method", "scope": {
+            "contract": {"id": "manager.scope", "range": "^1.0.0"}, "selector": {"host": "harness-manager"}}}]
+        binding = make_binding("binding:wrapper", wrapper, {})
+        result = discover([plugin, wrapper, binding], {"host": "codex"})
+        self.assertEqual(result["candidates"], [])
+        self.assertEqual(result["diagnostics"], [])
+
+    # //// 其他宿主的必需别名保持未知目标诊断的范围 [@x380kkm 2026-09-10] ////
+    def test_out_of_scope_required_alias_does_not_resolve_unavailable_target(self) -> None:
+        wrapper = make_plugin("plugin:wrapper")
+        wrapper["contributions"] = [{"id": "alias", "ref": "plugin:missing#method", "criticality": {"default": "required"}, "scope": {
+            "contract": {"id": "manager.scope", "range": "^1.0.0"}, "selector": {"host": "codex"}}}]
+        binding = make_binding("binding:wrapper", wrapper, {})
+        result = discover([wrapper, binding], {"host": "harness-manager"})
+        self.assertEqual(result["candidates"], [])
+        self.assertEqual(result["diagnostics"], [])
+        active = discover([wrapper, binding], {"host": "codex"})
+        self.assertIn("required_unavailable", {note["code"] for note in active["diagnostics"]})
 
     # //// 使用相同规则发现不同主题的普通 Skill [@x380kkm 2026-09-06] ////
     def test_skill_topics_use_the_same_selection_rules(self) -> None:

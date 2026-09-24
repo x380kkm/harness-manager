@@ -14,6 +14,7 @@ from pathlib import Path
 import stat
 import tempfile
 from typing import Any
+from .json_codec import json_values_equal as _json_equal
 
 from .storage_errors import (
     StorageBoundaryError,
@@ -46,21 +47,6 @@ def _copy_json(value: Any) -> Any:
     if isinstance(value, float) and math.isfinite(value):
         return value
     raise StorageValidationError("声明与计划必须由有限的 JSON 值组成.")
-
-
-# //// 按 JSON 类型与数值比较两个值 [@x380kkm 2026-09-06] ////
-def _json_equal(left: Any, right: Any) -> bool:
-    if isinstance(left, bool) or isinstance(right, bool):
-        return type(left) is type(right) and left == right
-    if isinstance(left, dict) and isinstance(right, dict):
-        return left.keys() == right.keys() and all(
-            _json_equal(left[key], right[key]) for key in left
-        )
-    if isinstance(left, list) and isinstance(right, list):
-        return len(left) == len(right) and all(
-            _json_equal(a, b) for a, b in zip(left, right)
-        )
-    return left == right
 
 
 # //// 生成供界面阅读的字段差异 [@x380kkm 2026-09-06] ////

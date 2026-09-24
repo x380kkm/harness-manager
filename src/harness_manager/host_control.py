@@ -6,14 +6,21 @@ from __future__ import annotations
 import base64
 from difflib import unified_diff
 import tomllib
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import uuid4
 
 from .host_projection import compile_host
+from .host_hooks import HOOK_POINT
+from .host_paths import host_storage
+from .host_storage import HOOK_STATE_NAME
+from .card_hook_state import hook_request_is_current
+from .json_codec import json_values_equal
 from .host_storage import HostStorage
 from .host_ownership import reconcile, decode_file, encode_file
 from .host_instructions import compose_instructions
 from .host_sources import HostSourceReader, verify_source_reads
 from .storage_errors import StorageConflictError, StorageValidationError, StorageError
+
+EXCLUDED_CATALOG_SCOPES = {"user": frozenset({"project", "project-local"}), "project": frozenset({"project-local"})}
 
 
 # //// 汇总文件差异并限定正文展示范围 [@x380kkm 2026-09-07] ////
@@ -35,6 +42,32 @@ def file_preview(targets: dict, baseline: dict) -> list[dict]:
     return files
 
 
+# //// 固定参与宿主编译的配置层原始声明 [@x380kkm 2026-09-10] ////
+class HostCatalogInputs:
+    def __init__(self, catalogs, scope: str) -> None:
+        self.catalogs = catalogs
+        self.project = catalogs.project
+        excluded = EXCLUDED_CATALOG_SCOPES.get(scope, ())
+        self.documents = {name: store.snapshot() for name, store in catalogs.layers().items() if name not in excluded}
+
+    # //// 从固定输入生成用户或项目的继承视图 [@x380kkm 2026-09-10] ////
+    def for_scope(self, scope: str):
+        excluded = EXCLUDED_CATALOG_SCOPES.get(scope, ())
+        return self.catalogs.effective({name: [] if name in excluded else self.documents.get(name, [])
+                                        for name in self.catalogs.layers()})
+
+    # //// 使用固定配置层对应的项目位置 [@x380kkm 2026-09-10] ////
+    def context(self, scope: str) -> dict:
+        return self.catalogs.context(scope)
+
+
+# //// 核对编译输入中的声明内容及新增和移除 [@x380kkm 2026-09-10] ////
+def verify_catalog_inputs(catalogs, inputs: dict[str, list[dict]]) -> None:
+    for scope, expected in inputs.items():
+        if not json_values_equal(catalogs.select(scope).snapshot(), expected):
+            raise StorageConflictError("host-catalog-source")
+
+
 # //// 管理接管开关和带备份的宿主应用入口 [@x380kkm 2026-09-07] ////
 class HostControl:
     def __init__(self, catalogs, codex, reader) -> None:
@@ -43,11 +76,7 @@ class HostControl:
 
     # //// 将用户或选定项目映射到固定宿主目录 [@x380kkm 2026-09-07] ////
     def storage(self, scope: str) -> HostStorage:
-        self.catalogs.select(scope)
-        if scope == "user":
-            return HostStorage(self.catalogs.user.workspace, self.codex.root, "codex-user")
-        root = self.catalogs.project.workspace
-        return HostStorage(self.catalogs.user.workspace, root, "codex-" + uuid5(NAMESPACE_URL, root.as_uri()).hex, config_subdir=".codex")
+        return host_storage(self.catalogs, self.codex.root, scope)
 
     # //// 返回接管状态和可选择的恢复记录 [@x380kkm 2026-09-07] ////
     def status(self, scope: str = "user") -> dict:
@@ -69,10 +98,12 @@ class HostControl:
     # //// 编译宿主配置并保存其实际来源观察 [@x380kkm 2026-09-08] ////
     def compile(self, scope: str) -> dict:
         reader = self.source_reader()
+        catalogs = HostCatalogInputs(self.catalogs, scope)
         global_inputs = self.storage("user").capture_instructions(["AGENTS.override.md", "AGENTS.md"]) if scope != "user" else None
         options = {"global_texts": {str(self.codex.root / name): (decode_file(value) or b"").decode("utf-8-sig")
                                     for name, value in global_inputs.items()}} if global_inputs is not None else {}
-        compiled = compile_host(self.catalogs, self.codex, reader, scope, **options)
+        compiled = compile_host(catalogs, self.codex, reader, scope, **options)
+        compiled["catalogReads"] = catalogs.documents
         compiled["sourceReads"] = reader.observations
         if global_inputs is not None:
             compiled["globalInstructionReads"] = global_inputs
@@ -117,6 +148,9 @@ class HostControl:
     # //// 在提交边界核对编译正文及其说明和配置输入 [@x380kkm 2026-09-08] ////
     def verify_compilation_inputs(self, inputs: dict, written: dict | None = None) -> None:
         written = written or {}
+        verify_catalog_inputs(self.catalogs, inputs.get("catalogReads", {}))
+        if any(not hook_request_is_current(self.catalogs, request) for request in inputs.get("hookRequests", {}).values()):
+            raise StorageConflictError("host-hook-request-source")
         applying_scope = inputs.get("scope", "user")
         storage = self.storage(applying_scope)
         written_paths = {storage._target(name): content for name, content in written.items()}
@@ -125,6 +159,8 @@ class HostControl:
             expected = dict(files)
             if scope == applying_scope and "config.toml" in written:
                 expected["config.toml"] = encode_file(written["config.toml"])
+            if scope == "user" and HOOK_STATE_NAME in written:
+                expected["config.toml"] = encode_file(written[HOOK_STATE_NAME])
             if self.storage(scope).capture_configuration() != expected:
                 raise StorageConflictError("host-instruction-config")
         global_inputs = inputs.get("globalInstructionReads", {})
@@ -209,12 +245,25 @@ class HostControl:
             capture_targets.setdefault("config.toml", None)
         if "hooks" in ownership:
             capture_targets.setdefault("hooks.json", None)
+        if "hooks" in ownership or any(entry.get("point") == HOOK_POINT for entry in compiled["contributions"]):
+            capture_targets.setdefault("config.toml" if scope == "user" else HOOK_STATE_NAME, None)
         baseline = storage.capture(capture_targets)
         self.verify_compilation_inputs(compiled)
         if ownership != storage.read_ownership():
             raise StorageConflictError("host-ownership")
         config_root = storage.target_root / storage.config_subdir
-        targets, updated = reconcile(compiled["targets"], compiled["contributions"], baseline["files"], ownership, config_root)
+        selected = dict(ownership)
+        if "hookRequests" in selected:
+            selected["hookRequests"] = {ref: request for ref, request in selected["hookRequests"].items()
+                                       if hook_request_is_current(self.catalogs, request)}
+            projected = {entry["ref"] for entry in compiled["contributions"] if entry.get("point") == HOOK_POINT}
+            if selected["hookRequests"].keys() - projected:
+                compiled["diagnostics"].append({"severity": "error", "code": "host_hook_request_scope", "subject": scope,
+                                                "message": "Hook 开关请求的绑定范围无法提供对应宿主定义, 请重新确认使用范围."})
+                return compiled, None
+            if not selected["hookRequests"]:
+                selected.pop("hookRequests")
+        targets, updated = reconcile(compiled["targets"], compiled["contributions"], baseline["files"], selected, config_root)
         if "instructionSource" in compiled:
             if storage.capture_instructions(list(compiled["instructionReads"])) != compiled["instructionReads"]:
                 raise StorageConflictError("host-instruction-source")
@@ -226,6 +275,8 @@ class HostControl:
                 "instructionSource": compiled.get("instructionSource"), "ownership": updated, "previousOwnership": ownership,
                 "configurationReads": compiled.get("configurationReads", {}),
                 "globalInstructionReads": compiled.get("globalInstructionReads", {}), "sourceReads": compiled.get("sourceReads", [])}
+        plan["catalogReads"] = compiled["catalogReads"]
+        plan["hookRequests"] = selected.get("hookRequests", {})
         return compiled, plan
 
     # //// 只读检查宿主文件及归属与当前声明的差异 [@x380kkm 2026-09-08] ////
@@ -283,6 +334,7 @@ class HostControl:
                 raise StorageValidationError("接管已关闭, 请先开启后再应用.")
             compiled = self.compile(plan["scope"])
             if (any(note.get("severity") == "error" for note in compiled["diagnostics"]) or compiled["targets"] != plan["compiledTargets"]
+                    or compiled["catalogReads"] != plan["catalogReads"]
                     or compiled["contributions"] != plan["compiledContributions"]
                     or compiled.get("instructionSource") != plan.get("instructionSource")
                     or compiled.get("sourceReads", []) != plan.get("sourceReads", [])):

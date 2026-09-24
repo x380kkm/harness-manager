@@ -84,6 +84,109 @@ class CardOperationTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), before)
         self.assertEqual(self.contexts(self.skills["writing"]), [])
 
+    # //// 共享唯一自定义绑定时保留启用状态和选项 [@x380kkm 2026-09-10] ////
+    def test_sharing_preserves_sole_custom_binding(self) -> None:
+        identity = self.skills["writing"]
+        self.configure(identity, "enabled")
+        store = self.manager.catalogs.user
+        plugin = self.cards.describe(identity)["management"]["pluginId"]
+        binding = next(document for document in store.snapshot()
+                       if document["kind"] == "PluginBinding" and document["plugin"]["id"] == plugin)
+        custom = deepcopy(binding)
+        custom["id"] = "binding:custom/writing"
+        custom["options"] = {"mode": "personal"}
+        store.apply_many([store.preview_remove(binding["id"], binding), store.preview_put(custom)])
+
+        result = self.share(identity)
+
+        shared = next(document for document in self.manager.catalogs.project.snapshot()
+                      if document["kind"] == "PluginBinding")
+        self.assertTrue(shared["enabled"])
+        self.assertEqual(shared["options"], {"mode": "personal"})
+        self.assertTrue(result["management"]["effectiveEnabled"])
+
+    # //// 共享私人自定义绑定后移除旧身份并继续采用共享选择 [@x380kkm 2026-09-10] ////
+    def test_sharing_normalizes_custom_private_binding(self) -> None:
+        identity = self.skills["writing"]
+        self.configure(identity, "enabled", "project-local")
+        store = self.manager.catalogs.project_local
+        binding = next(document for document in store.snapshot() if document["kind"] == "PluginBinding")
+        custom = {**binding, "id": "binding:custom/private", "options": {"mode": "project"}}
+        store.apply_many([store.preview_remove(binding["id"], binding), store.preview_put(custom)])
+
+        result = self.share(identity)
+
+        self.assertEqual(result["management"]["privateState"], "inherit")
+        self.assertFalse(any(document["kind"] == "PluginBinding" for document in store.snapshot()))
+        shared = next(document for document in self.manager.catalogs.project.snapshot()
+                      if document["kind"] == "PluginBinding")
+        self.assertEqual(shared["options"], {"mode": "project"})
+        self.share(identity, False)
+        self.assertEqual(next(document for document in store.snapshot()
+                              if document["kind"] == "PluginBinding")["options"], {"mode": "project"})
+
+    # //// 不可合并的自定义使用设置在共享写入前返回诊断 [@x380kkm 2026-09-10] ////
+    def test_sharing_ambiguous_custom_bindings_preserves_all_layers(self) -> None:
+        identity = self.skills["writing"]
+        self.configure(identity, "enabled")
+        store = self.manager.catalogs.user
+        binding = next(document for document in store.snapshot() if document["kind"] == "PluginBinding")
+        first = {**binding, "id": "binding:custom/one", "options": {"mode": "one"}}
+        second = {**binding, "id": "binding:custom/two", "options": {"mode": "two"}}
+        store.apply_many([store.preview_remove(binding["id"], binding), store.preview_put(first), store.preview_put(second)])
+        before = {scope: layer.snapshot() for scope, layer in self.manager.catalogs.layers().items()}
+
+        with self.assertRaises(CardError) as raised:
+            self.cards.set_shared(identity, True)
+
+        self.assertEqual(raised.exception.code, "sharing_binding_ambiguous")
+        self.assertEqual({scope: layer.snapshot() for scope, layer in self.manager.catalogs.layers().items()}, before)
+
+    # //// 自定义共享端点在相邻卡片发布后保持共享关系 [@x380kkm 2026-09-10] ////
+    def test_sharing_relation_recognizes_custom_shared_endpoint(self) -> None:
+        source, target = self.skills["writing"], self.skills["analysis"]
+        self.configure(source, "enabled", "project-local")
+        self.cards.set_relation(source, target, "Shared guidance.", "project-local")
+        self.share(target)
+        store = self.manager.catalogs.project
+        binding = next(document for document in store.snapshot() if document["kind"] == "PluginBinding")
+        custom = {**binding, "id": "binding:custom/shared-endpoint"}
+        store.apply_many([store.preview_remove(binding["id"], binding), store.preview_put(custom)])
+
+        self.share(source)
+
+        self.assertEqual(len(self.shared_adapters()), 1)
+        relation = self.cards.relations(source, "project-local")["outgoing"][0]
+        self.assertEqual(relation["scope"], "project")
+        self.assertIn(custom, store.snapshot())
+        self.cards.set_relation(source, target, "Updated guidance.", "project-local", relation["baseline"])
+        relation = self.cards.relations(source, "project-local")["outgoing"][0]
+        self.assertEqual(relation["scope"], "project")
+        self.assertEqual(relation["text"], "Updated guidance.")
+
+    # //// 相邻共享卡片的独立宿主绑定保持关系归属和各自选项 [@x380kkm 2026-09-10] ////
+    def test_shared_relation_preserves_multiple_host_bindings(self) -> None:
+        source, target = self.skills["writing"], self.skills["analysis"]
+        self.configure(source, "enabled", "project")
+        current = self.configure(target, "enabled", "project")
+        binding = current["configBaseline"]["binding"]
+        native = deepcopy(binding)
+        native["target"]["selector"]["host"] = "codex"
+        manager = deepcopy(binding)
+        manager["id"] = "binding:manager/shared-target"
+        manager["target"]["selector"]["host"] = "harness-manager"
+        store = self.manager.catalogs.project
+        store.apply_many([store.preview_put(native, binding), store.preview_put(manager)])
+
+        self.cards.set_relation(source, target, "Shared guidance.", "project-local")
+        self.configure(source, "disabled", "project")
+        self.assertEqual(self.cards.relations(source, "project-local")["outgoing"][0]["scope"], "project")
+        self.configure(source, "inherit", "project")
+
+        self.assertEqual(self.cards.relations(source, "project-local")["outgoing"][0]["scope"], "project-local")
+        self.assertIn(native, store.snapshot())
+        self.assertIn(manager, store.snapshot())
+
     # //// 独立规则按用户和项目范围选择并恢复继承 [@x380kkm 2026-09-07] ////
     def test_rules_are_independently_enabled_across_scopes(self) -> None:
         first, second = self.rules
@@ -290,6 +393,36 @@ class CardOperationTests(unittest.TestCase):
                     self.assertEqual(self.manager.catalogs.select(scope).snapshot(), documents)
                 self.assertFalse(self.manager.catalogs.for_scope("project-local").diagnostics)
                 self.assertEqual(self.cards.describe(identity, "project-local")["subject"]["id"], identity)
+
+    # //// 共享保留用户来源的选项类型变化及跨层一致性 [@x380kkm 2026-09-10] ////
+    def test_sharing_preserves_external_option_type_change(self) -> None:
+        identity = self.rules[0]
+        self.configure(identity, "enabled")
+        user = self.manager.catalogs.user
+        original = self.cards.describe(identity, "project-local")["sharingBaseline"]["source"]
+        document = deepcopy(original)
+        document["options"] = {"schema": {}, "defaults": {"flags": [False]}}
+        user.apply(user.preview_put(document, original))
+        baseline = self.cards.describe(identity, "project-local")["sharingBaseline"]
+        changed = deepcopy(document)
+        changed["options"]["defaults"]["flags"] = [0]
+        before = {scope: store.snapshot() for scope, store in self.manager.catalogs.layers().items() if scope != "user"}
+        original_apply = Store.apply_many
+        injected = False
+
+        def apply_with_source_edit(store, plans, **kwargs):
+            nonlocal injected
+            if not injected:
+                injected = True
+                original_apply(user, [user.preview_put(changed, document)])
+            return original_apply(store, plans, **kwargs)
+
+        with patch.object(Store, "apply_many", apply_with_source_edit), self.assertRaises(StorageConflictError):
+            self.cards.set_shared(identity, True, baseline)
+        for scope, documents in before.items():
+            self.assertEqual(self.manager.catalogs.select(scope).snapshot(), documents)
+        self.assertFalse(self.manager.catalogs.for_scope("project-local").diagnostics)
+        self.assertEqual(self.cards.describe(identity, "project-local")["subject"]["id"], identity)
 
     # //// 共享期间保留其他卡片的独立用户修改 [@x380kkm 2026-09-08] ////
     def test_sharing_accepts_unrelated_user_change(self) -> None:

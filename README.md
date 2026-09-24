@@ -173,6 +173,10 @@ uv run harness-manager call host.status
 
 规则文件的覆盖顺序和项目配置的加载由 Codex 决定. Hook 写入后仍需满足 Codex 的信任要求才能执行.
 
+Hook 卡片读取 Codex 用户配置 `hooks.state` 中的逐处理器开关. 在 Codex 修改开关后, 刷新卡片即可读取相同选择; `nativeState=mixed` 表示同组处理器的开关不同. `card.configure` 沿用完整 `configBaseline`, 接管开启时把明确启停写入原生状态, 接管关闭时保存待应用选择. 普通同步保留原生选择, 两端冲突时读取诊断并重新确认. 启停保留事件组位置; 编辑后的命令按 Codex 的信任要求重新审阅. `nativeEnabled` 表示配置开关, 执行结果由 Codex 确认.
+
+项目 Hook 的个人开关同样保存在用户配置. 项目恢复只合并该项目 Hook 的状态行, 其他用户设置沿用当前文件. 来自用户配置的 Hook 在用户页面调整; 项目页面读取其实际原生状态.
+
 恢复未完成操作前, 当前文件另存为 `interrupted`, 保留最近一份, 原有 `before-restore` 保持不变. 备份摘要的 `restorable=false` 表示文件与管理归属无法对应, `restoreError` 提供原因. 这些字节继续保存在本机, 面板只允许选择可恢复的记录. 仅管理归属变化时, 面板也提供确认入口.
 
 恢复失败或中断时, 所选目标保留为 `restore-target` 备份, 后续普通应用保留该恢复目标. 从 `host.status` 读取可选身份后重新预览恢复. 同名 `before-restore` 保护副本在恢复成功后替换.
@@ -192,6 +196,8 @@ CLI 和 MCP 使用相同方法. 用 `--workspace` 选择当前位置, 调用 `pr
 ## 按需读取与统计
 
 `catalog.discover` 默认返回用于选择内容的摘要, `read` 提供下一次调用. `point` 在分页前筛选内容类型, Skill 使用 `skill.x380kkm/deployment`; `next_cursor` 是下一页的游标. 使用 `query` 搜索所需内容, 维护来源和绑定时设置 `detail=full` 取得选项, 来源和引用链.
+
+`skill.list` 默认使用 `host=harness-manager`. `context` 中的任务等字段补充默认上下文, 显式 `host` 则选择对应宿主. 使用候选返回的 `read` 参数读取正文, 保持同一范围与版本.
 
 `read` 给出所选内容的下一次调用. `content.read` 读取完整单元; `content.open` 固定选定 Skill 和当前范围的完整配套内容. 收到 `readiness=needs-content` 时使用 `continuation` 调用 `content.continue`, 可增加 `budget` 以容纳更大的完整单元. 可选资料通过 `resource` 或 `resources` 明确请求.
 

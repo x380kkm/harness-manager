@@ -20,14 +20,14 @@ from .declarations import index_declarations, matches_version
 from .json_codec import encode_json
 from .module_contexts import module_contexts
 from .native_rule_scope import inactive_global_rules
-from .projection import _bindings, _plugin_selection, project_content
+from .projection import _binding_configuration, _bindings, _plugin_selection, _selection, project_content, scope_may_match
 from .sources import MAX_CONTENT_BYTES, SourceError
+from .codex_hook_state import EVENT_KEYS
 
 RULE_POINTS = frozenset({INSTRUCTION_POINT, PREFERENCE_POINT})
 HOOK_POINT = "hook.x380kkm/lifecycle"
 SUPPORTED_POINTS = RULE_POINTS | {SKILL_POINT, TASK_CONTEXT_POINT, HOOK_POINT}
-HOOK_EVENTS = frozenset({"SessionStart", "SessionEnd", "SubagentStart", "SubagentStop", "PreToolUse", "PostToolUse",
-                         "PermissionRequest", "PreCompact", "PostCompact", "UserPromptSubmit", "Stop", "Interrupt"})
+HOOK_EVENTS = frozenset(EVENT_KEYS)
 
 
 # //// 保存宿主编译的阻断诊断 [@x380kkm 2026-09-07] ////
@@ -55,15 +55,24 @@ def check_carrier_scope(scope: dict | None, subject: str, diagnostics: list[dict
 # //// 核对实际绑定及其成员引用链的静态范围 [@x380kkm 2026-09-07] ////
 def check_bound_scopes(documents: list[dict], context: dict, layers: dict, diagnostics: list[dict]) -> None:
     index = index_declarations(documents)
+    carrier_context = {key: value for key, value in context.items() if key != "path"}
     for document in documents:
-        if document["kind"] == "PluginBinding":
+        if document["kind"] == "PluginBinding" and scope_may_match(document["target"], carrier_context):
             check_carrier_scope(document["target"], document["id"], diagnostics, context.get("path"))
     for identifier, bindings in _bindings(documents, context, index.diagnostics, layers).items():
         selector = _plugin_selection(identifier, bindings, index.diagnostics)
         plugin = index.resolve_plugin(identifier, [selector]) if selector is not None else None
+        active = _binding_configuration(plugin, bindings, [])[0] if plugin is not None else False
         for alias in plugin["contributions"] if plugin else []:
             reference = f"{plugin['id']}#{alias['id']}"
-            for owner, member in index.resolve_reference(reference, plugin["release"]["version"]) or []:
+            chain = index.resolve_reference(reference, plugin["release"]["version"]) or []
+            included, required = _selection(alias["id"], bindings, [], reference)
+            required = required or any(member.get("criticality", {}).get("default") == "required" for _, member in chain)
+            if chain and chain[-1][1].get("point") not in SUPPORTED_POINTS and (not active or not included and not required):
+                continue
+            if any(not scope_may_match(member.get("scope"), carrier_context) for _, member in chain):
+                continue
+            for owner, member in chain:
                 check_carrier_scope(member.get("scope"), f"{owner['id']}#{member['id']}", diagnostics, context.get("path"))
 
 
@@ -75,7 +84,7 @@ def managed_projection(documents: list[dict], context: dict, layers: dict) -> tu
             document["enabled"] = True
             document.pop("selection", None)
             document.pop("selectionBaseline", None)
-    return project_content(controlled, context, layers=layers)
+    return project_content(controlled, context, layers=layers, points=SUPPORTED_POINTS)
 
 
 # //// 按原始来源合并组合别名并核对版本一致性 [@x380kkm 2026-09-07] ////
@@ -255,12 +264,17 @@ def skill_configuration(root: Path, states: dict[Path, bool]) -> bytes:
 
 
 # //// 核对项目文件无法撤去的全局规则来源 [@x380kkm 2026-09-07] ////
-def check_inherited_rules(catalogs, selected: list, enabled_sources: dict, diagnostics: list[dict]) -> set[str]:
+def check_inherited_rules(catalogs, selected: list, enabled_sources: dict, diagnostics: list[dict], managed: list) -> set[str]:
     user_view = catalogs.for_scope("user")
     context = {"user": getpass.getuser(), "host": "codex"}
     entries, _ = project_content(user_view.documents, context, layers=user_view.layers)
     entries.extend(module_contexts(entries))
     user_sources = selected_sources(entries, context, diagnostics)
+    active_user = set(user_sources)
+    user_managed, _ = managed_projection(user_view.documents, context, user_view.layers)
+    user_sources.update({reference: entry for reference, entry in unique_sources(user_managed, diagnostics).items()
+                         if entry.member["point"] == HOOK_POINT})
+    managed_sources = unique_sources(managed, diagnostics)
     for reference, entry in user_sources.items():
         inherited = entry.member["point"] in RULE_POINTS
         if entry.member["point"] == TASK_CONTEXT_POINT:
@@ -273,9 +287,10 @@ def check_inherited_rules(catalogs, selected: list, enabled_sources: dict, diagn
             compilation_error(diagnostics, "host_inherited_rule_scope", reference,
                               "Codex 会先读取用户级规则. 项目文件无法撤去该规则, 请调整用户级配置或把该规则限定为项目级.")
         if entry.member["point"] == HOOK_POINT:
-            current = enabled_sources.get(reference)
+            current = managed_sources.get(reference)
             try:
-                same = current is not None and json.dumps(hook_group(entry), sort_keys=True) == json.dumps(hook_group(current), sort_keys=True)
+                same = (current is not None and (reference in active_user) == (reference in enabled_sources)
+                        and json.dumps(hook_group(entry), sort_keys=True) == json.dumps(hook_group(current), sort_keys=True))
             except ContentError:
                 same = False
             if not same:
@@ -295,8 +310,12 @@ def compile_host(catalogs, codex, reader, scope: str = "user", *, global_texts: 
     diagnostics = [{**item, "severity": "error"} for item in [*view.diagnostics, *active_diagnostics, *managed_diagnostics]]
     check_bound_scopes(view.documents, context, view.layers, diagnostics)
     enabled_sources = selected_sources(selected, context, diagnostics)
-    inherited_hooks = check_inherited_rules(catalogs, selected, enabled_sources, diagnostics) if scope != "user" else set()
+    inherited_hooks = check_inherited_rules(catalogs, selected, enabled_sources, diagnostics, managed) if scope != "user" else set()
     sources = unique_sources(managed, diagnostics)
+    for entry in selected:
+        if entry.member["point"] not in SUPPORTED_POINTS:
+            compilation_error(diagnostics, "host_carrier_adapter", entry.summary["content"],
+                              "此成员需要能够说明宿主字段与归属的载体适配器.")
     index = index_declarations(view.documents)
     targets, contributions, rules, skills, hooks, instructions = {}, [], [], {}, {}, []
     has_rules, has_hooks = False, False

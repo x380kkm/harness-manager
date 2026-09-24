@@ -6,13 +6,13 @@ from __future__ import annotations
 from copy import deepcopy
 from uuid import uuid4
 
-from .catalogs import Catalogs
+from .catalogs import Catalogs, CatalogView
 from .content_plan import SKILL_POINT, TASK_CONTEXT_POINT
 from .declarations import contribution_name, index_declarations
 from .projection import SCOPE_KEYS
 from .protocol import document_identity, document_name, validate_document, value_diagnostics
 from .storage_errors import StorageConflictError
-from .usage import find_plugin, usage_document
+from .usage import UsageError, find_plugin, usage_document
 
 SETTINGS_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -38,17 +38,33 @@ class ContextError(ValueError):
         self.code = code
 
 
-# //// 提取选定发布中的 Skill 选择身份 [@x380kkm 2026-09-06] ////
-def skill_choices(documents: list[dict], plugin: dict) -> list[dict]:
+# //// 解析选定发布中的完整 Skill 引用链 [@x380kkm 2026-09-10] ////
+def skill_chains(documents: list[dict], plugin: dict) -> list[list[tuple[dict, dict]]]:
     index = index_declarations(documents)
     result = []
     for member in plugin["contributions"]:
         ref = f"{plugin['id']}#{member['id']}"
         chain = index.resolve_reference(ref, plugin["release"]["version"])
         if chain and chain[-1][1].get("point") == SKILL_POINT:
-            result.append({"ref": ref, "name": contribution_name(chain[-1][1]),
-                           "references": [f"{owner['id']}#{value['id']}" for owner, value in chain]})
+            result.append(chain)
     return result
+
+
+# //// 提取选定发布中的 Skill 选择身份 [@x380kkm 2026-09-06] ////
+def skill_choices(documents: list[dict], plugin: dict) -> list[dict]:
+    return [{"ref": f"{chain[0][0]['id']}#{chain[0][1]['id']}", "name": contribution_name(chain[-1][1]),
+             "references": [f"{owner['id']}#{value['id']}" for owner, value in chain]}
+            for chain in skill_chains(documents, plugin)]
+
+
+# //// 收集配套目标与引用来源的声明基线 [@x380kkm 2026-09-10] ////
+def target_inputs(view: CatalogView, identity: str, reference: str) -> dict[str, dict]:
+    selected = find_plugin(view, identity)
+    chains = [chain for chain in skill_chains(view.documents, selected)
+              if reference in {f"{owner['id']}#{member['id']}" for owner, member in chain}]
+    if not chains:
+        raise ContextError("context_skill", "请选择当前发布中的 Skill 并填写配套正文.")
+    return {document_identity(owner): owner for chain in chains for owner, _ in chain}
 
 
 # //// 判断声明是否可以由单份配套说明表单维护 [@x380kkm 2026-09-06] ////
@@ -155,16 +171,27 @@ class CompanionContexts:
                 or (binding is not None and (binding["kind"] != "PluginBinding" or binding["plugin"]["id"] != document["id"]))):
             raise ContextError("context_plan", "正文与使用绑定需要属于同一配套内容.")
         payload = document["contributions"][0]["payload"]
-        description = self.describe(plan["plugin"], plan["scope"])
         if not removing:
+            description = self.describe(plan["plugin"], plan["scope"])
             self._check_settings(description, {"name": document_name(document), "skill": payload["skill"], "text": payload["text"],
                                                "selector": binding["target"]["selector"], "enabled": binding.get("enabled", True)})
-        # //// 核对预览中的配套绑定集合仍然完整 [@x380kkm 2026-09-06] ////
+            expected_inputs = target_inputs(self.catalogs.for_scope(plan["scope"]), plan["plugin"], payload["skill"])
+        # //// 核对配套绑定集合与目标 Skill 的声明来源 [@x380kkm 2026-09-10] ////
         def verify_current(documents: list[dict]) -> None:
             expected = {entry["id"] for entry in entries[1:] if entry.get("before") is not None}
             actual = {value["id"] for value in documents if value["kind"] == "PluginBinding" and value["plugin"]["id"] == document["id"]}
             if actual != expected:
                 raise StorageConflictError(next(iter(actual - expected or expected - actual)))
+            if not removing:
+                excluded = {"user": ("project", "project-local"), "project": ("project-local",)}.get(plan["scope"], ())
+                view = self.catalogs.effective({**{name: [] for name in excluded}, plan["scope"]: documents})
+                try:
+                    current_inputs = target_inputs(view, plan["plugin"], payload["skill"])
+                except (ContextError, UsageError) as error:
+                    raise StorageConflictError(plan["plugin"]) from error
+                for identity in sorted(expected_inputs.keys() | current_inputs.keys()):
+                    if expected_inputs.get(identity) != current_inputs.get(identity):
+                        raise StorageConflictError(identity)
 
         try:
             results = store.apply_many(entries, verify_current=verify_current)

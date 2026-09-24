@@ -2,7 +2,7 @@
 // # codex-inventory-view
 // 卡片与列表共用来源筛选和选择. 关闭内容的显示设置独立于宿主启用状态.
 
-import { element, request, textElement, unwrap } from './view-utils.mjs';
+import { element, refreshAfterSave, request, textElement, unwrap } from './view-utils.mjs';
 import { categories, inventoryModel, matchesGroup } from './inventory-model.mjs';
 import { groupDisabled, visibleInventory } from './inventory-visibility.mjs';
 import { renderGroupList, selectGroupRow } from './inventory-list.mjs';
@@ -45,25 +45,40 @@ export function createInventoryView({ run, setStatus, onProject, onScopeChanged,
 
   // //// 将模块整体使用设置保存到当前配置层 [@x380kkm 2026-09-07] ////
   async function configureModule(item, stateValue) {
-    const usage = await request('usage.describe', { plugin: item.details.documentId, scope: state.scope });
+    const usage = await request('usage.describe', { plugin: item.details.documentId, scope: state.scope, context: { host: 'codex' } });
     const defaultId = `binding:${state.scope}/${item.details.pluginId}`;
-    const baseline = usage.bindings.find((binding) => binding.id === defaultId) || null;
+    const candidates = usage.contextBindings;
+    if (!Array.isArray(candidates) || !Object.hasOwn(usage, 'selectedPlugin')) throw new Error('请重新连接管理服务以读取当前宿主的模块绑定.');
+    if (stateValue !== 'enabled' && usage.selectedPlugin !== usage.plugin) {
+      setStatus('当前范围未选择此模块版本, 其设置保持不变.');
+      return;
+    }
+    if (candidates.length > 1) throw new Error('当前宿主有多个模块绑定, 请在使用设置中选择具体绑定.');
+    const baseline = candidates[0] || null;
     if (stateValue === 'inherit' && baseline) {
       const result = await request('document.preview_remove', { id: baseline.id, baseline, scope: state.scope });
       await request('document.apply', { plan: result.plan });
     } else if (stateValue !== 'inherit') {
-      const result = await request('usage.preview', { plugin: item.details.documentId, scope: state.scope, baseline, settings: { state: stateValue } });
+      const settings = { state: stateValue };
+      if (stateValue === 'enabled' && usage.selectedPlugin !== usage.plugin) {
+        settings.constraint = usage.release.version;
+        settings.channel = usage.release.channel || null;
+      }
+      if (!baseline) {
+        if (usage.suggestedId !== defaultId) settings.id = usage.suggestedId;
+        if (usage.bindings.length) settings.selector = { ...(state.scope === 'user' ? { user: 'current' } : {}), host: 'codex' };
+      }
+      const result = await request('usage.preview', { plugin: item.details.documentId, scope: state.scope, baseline, settings });
       await request('document.apply', { plan: result.plan });
     }
-    await refresh(); setStatus('模块使用设置已保存.');
+    await refreshAfterSave(refresh, setStatus, '模块使用设置已保存.');
   }
 
   // //// 在当前页面的配置层快捷调整启用状态 [@x380kkm 2026-09-07] ////
   async function configure(id, value) {
     const baseline = state.raw.items.get(id)?.management?.configBaseline;
     await request('card.configure', { id, state: value, scope: state.scope, baseline });
-    await refresh();
-    setStatus(`${state.scope === 'user' ? '用户默认' : '个人项目覆盖'}已更新.`);
+    await refreshAfterSave(refresh, setStatus, `${state.scope === 'user' ? '用户默认' : '个人项目覆盖'}已更新.`);
   }
 
   // //// 发布或收回项目卡片并同步受影响关系 [@x380kkm 2026-09-07] ////
@@ -71,9 +86,17 @@ export function createInventoryView({ run, setStatus, onProject, onScopeChanged,
     const description = await request('card.describe', { id, scope: 'project-local' });
     let result;
     try { result = await request('card.set_shared', { id, shared: value, baseline: description.sharingBaseline }); }
-    catch (error) { await refresh(); throw error; }
-    await refresh();
-    setStatus(value ? '项目共享文件已更新, 依赖按两端共享状态同步.' : '项目共享项已移出, 个人设置与关系保留.');
+    catch (error) {
+      try { await refresh(); }
+      catch (refreshError) {
+        const details = error.details && typeof error.details === 'object' && !Array.isArray(error.details)
+          ? error.details : { cause: error.details };
+        error.details = { ...details, refresh: { message: refreshError.message || String(refreshError),
+          code: refreshError.code, details: refreshError.details } };
+      }
+      throw error;
+    }
+    await refreshAfterSave(refresh, setStatus, value ? '项目共享文件已更新, 依赖按两端共享状态同步.' : '项目共享项已移出, 个人设置与关系保留.');
     if (result.warnings?.length) {
       element('inventory-diagnostics').hidden = false;
       element('inventory-diagnostics-title').textContent = '共享来源提示';

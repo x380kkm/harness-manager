@@ -105,8 +105,7 @@ def apply_sharing(frame, stages: list[tuple[str, dict]], guard) -> bool:
 
 # //// 核对共享关系的两端均有明确共享记录 [@x380kkm 2026-09-07] ////
 def check_shared_relations(documents: list[dict]) -> None:
-    bindings = {value["plugin"]["id"] for value in documents if value["kind"] == "PluginBinding"
-                and value["id"] == f"binding:project/{value['plugin']['id']}"}
+    bindings = {value["plugin"]["id"] for value in documents if value["kind"] == "PluginBinding"}
     definitions = {value["id"] for value in documents if value["kind"] == "Plugin"}
     for document in documents:
         if document["kind"] != "Plugin" or not document["id"].startswith("plugin:adapter/"):

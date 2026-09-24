@@ -13,6 +13,12 @@ export function cardSubject(model, group) {
 // //// 从当前声明取得可读的启用范围 [@x380kkm 2026-09-07] ////
 export function activationLabel(management) {
   if (!management) return '未设置';
+  if (management.kind === 'hook') {
+    if (typeof management.pendingNativeState === 'boolean') return management.pendingNativeState ? '待应用开启' : '待应用关闭';
+    if (management.nativeState === 'mixed') return '部分处理器开启';
+    if (management.nativeState === 'enabled') return '原生已开启';
+    if (management.nativeState === 'disabled') return '原生已关闭';
+  }
   if (management.moduleUses?.length && (management.scope === 'user' ? management.userState : management.privateState) !== 'enabled') return '模块正在使用';
   if (management.scope === 'user') {
     return management.userState === 'enabled' ? '用户级开启' : management.userState === 'disabled' ? '用户级关闭' : '未设置';
@@ -39,10 +45,17 @@ export function activationControl(subject, actions) {
   const current = textElement('option', activationLabel(subject.management));
   current.value = ''; current.disabled = true; select.append(current);
   const project = actions.scope !== 'user';
+  const inheritedHook = subject.kind === 'hook' && project && subject.management?.nativeScope === 'user';
   const choices = [['enabled', project ? '在此项目开启' : '用户级开启'], ['disabled', project ? '在此项目关闭' : '用户级关闭'], ['inherit', project ? '恢复继承' : '恢复默认']];
-  for (const [value, label] of choices) { const option = textElement('option', label); option.value = value; select.append(option); }
+  for (const [value, label] of choices) {
+    const option = textElement('option', label); option.value = value;
+    option.disabled = inheritedHook && value !== 'inherit'; select.append(option);
+  }
   select.value = '';
   select.disabled = actions.readOnly || subject.management?.supported === false;
+  if (inheritedHook) {
+    select.title = '此 Hook 由用户配置提供, 在用户配置中调整开关';
+  }
   select.addEventListener('change', () => { const action = select.value; select.value = ''; actions.onConfigure(subject.id, action); });
   return select;
 }

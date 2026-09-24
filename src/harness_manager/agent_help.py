@@ -31,6 +31,8 @@ TOPICS = {
                 "删除使用 document.preview_remove, 再 document.apply. "
                 "card.describe 的 configBaseline 用于 card.configure, sharingBaseline 用于 card.set_shared. "
                 "card.configure 的 state 使用 enabled, disabled 或 inherit. "
+                "Hook 的 configBaseline 包含原生开关观察, 完整回传该基线; nativeState 与 nativeHandlers 表示逐处理器选择, mixed 表示开关不同. "
+                "原生改动在下一次读取反映到卡片. Manager 显式启停在接管开启时同步原生, 关闭时返回 pendingNativeState, 表示待应用选择. "
                 "card.configure 与关系快捷操作直接保存; 调用前需要用户的修改授权. "
                 "接管开启时, 保存接口会尝试应用宿主文件. 直接编辑目录或来源文件后, 使用 host.preview 和 host.apply 应用变更."
     },

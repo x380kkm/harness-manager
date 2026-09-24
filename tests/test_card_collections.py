@@ -49,6 +49,35 @@ class CardCollectionTests(unittest.TestCase):
         baseline = self.manager.cards.describe("rule:format", "project-local")["sharingBaseline"]
         self.manager.cards.set_shared("rule:format", True, baseline)
 
+    # //// 自定义共享绑定继续支持集合保存和本层启停 [@x380kkm 2026-09-10] ////
+    def test_shared_collection_accepts_custom_binding_identity(self):
+        self.share_rule()
+        previous = next(value for value in self.manager.catalogs.select("project").snapshot()
+                        if value["kind"] == "PluginBinding" and value["plugin"]["id"] == self.rule["id"])
+        custom = deepcopy(previous)
+        custom["id"] = "binding:custom/shared"
+        self.save(custom, "project")
+        removal = self.manager.preview_remove(previous["id"], previous, "project")
+        self.manager.apply_document(removal["plan"])
+        self.save(collection(), "project")
+        baseline = self.manager.cards.describe("rule:format", "project")["configBaseline"]
+        self.manager.cards.configure("rule:format", "disabled", "project", baseline)
+        inventory = self.manager.snapshot_cards("project-local")
+        self.assertEqual(len(inventory["collections"]), 1)
+        self.assertFalse(any(note["code"] == "collection_missing_card" for note in inventory["diagnostics"]))
+
+    # //// 同一发布的多个共享绑定保留各自声明的卡片身份 [@x380kkm 2026-09-10] ////
+    def test_shared_card_identities_include_all_bindings(self):
+        reference = self.rule["id"] + "#" + self.rule["contributions"][0]["id"]
+        bindings = []
+        for name in ("codex", "manager"):
+            bindings.append({"apiVersion": "manager.x380kkm/v1", "kind": "PluginBinding", "id": "binding:custom/" + name,
+                             "plugin": {"id": self.rule["id"], "constraint": "local"},
+                             "target": {"contract": {"id": "manager.scope", "range": "^1.0.0"}, "selector": {"host": name}},
+                             "extensions": [{"contract": {"id": CARD_IDENTITY_CONTRACT, "range": "^1.0.0"},
+                                             "payload": {"itemId": "rule:" + name, "ref": reference}}]})
+        self.assertTrue({"rule:codex", "rule:manager"} <= shared_card_ids([self.rule, *bindings]))
+
     # //// 层级覆盖保留当前层基线与来源发布冲突 [@x380kkm 2026-09-07] ////
     def test_layer_overrides_are_limited_to_collections(self) -> None:
         user = collection()

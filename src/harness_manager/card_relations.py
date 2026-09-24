@@ -6,11 +6,14 @@ from __future__ import annotations
 from copy import deepcopy
 from uuid import NAMESPACE_URL, uuid5
 
+from .card_bindings import card_binding, configured_binding, plugin_bindings
 from .card_subjects import CardError, CardSubjects, POINTS
 from .content_plan import TASK_CONTEXT_POINT
+from .declarations import index_declarations
+from .json_codec import json_values_equal
+from .projection import ScopedValue, _bindings, _plugin_selection, resolve_values
 from .protocol import document_identity
 from .storage_errors import StorageConflictError
-from .usage import usage_document
 
 
 # //// 为有向卡片对分配跨层稳定身份 [@x380kkm 2026-09-07] ////
@@ -48,6 +51,20 @@ def relation_document(source: dict, target: dict, text: str, scope: str) -> dict
                                               "target": target["ref"], "strength": "advisory"}]}]}
 
 
+# //// 按有效绑定选择关系正文和继承后的开关值 [@x380kkm 2026-09-10] ////
+def selected_relation(frame: CardSubjects, plugin: str) -> tuple[dict, bool]:
+    index = index_declarations(frame.view.documents)
+    bindings = _bindings(frame.view.documents, frame.context, index.diagnostics, frame.view.layers).get(plugin, [])
+    selector = _plugin_selection(plugin, bindings, index.diagnostics)
+    document = index.resolve_plugin(plugin, [selector]) if selector is not None else None
+    values = [ScopedValue(value.scope, value.subject, value.value["enabled"], layer=value.layer)
+              for value in bindings if "enabled" in value.value]
+    valid, enabled = resolve_values(values, index.diagnostics, plugin + "/enabled")
+    if document is None or relation_payload(document) is None or not valid:
+        raise CardError("relation_selection", "关系的使用绑定需要选中唯一的正文发布和开关值, 请在使用设置中确认.")
+    return document, enabled is not False
+
+
 # //// 维护参考关系的一份正文与独立范围绑定 [@x380kkm 2026-09-07] ////
 class CardRelations:
     def __init__(self, frame: CardSubjects) -> None:
@@ -59,34 +76,39 @@ class CardRelations:
         plugin = relation_id(source, target)
         identity = plugin + "@local:" + scope
         document = next((value for value in documents if document_identity(value) == identity), None)
-        binding = next((value for value in documents if value["kind"] == "PluginBinding"
-                        and value["id"] == f"binding:{scope}/{plugin}"), None)
+        binding = card_binding(self.frame, plugin, scope)
         return {"document": document, "binding": binding}
 
     # //// 保留当前范围内的关系来源与继承状态 [@x380kkm 2026-09-07] ////
     def _edge(self, source: str, target: str) -> dict | None:
-        scope = self.frame.scope
-        baseline = self._baseline(source, target, scope)
-        if baseline["document"] is None and scope == "project-local":
-            scope = "project"
+        scopes = ("user", "project", "project-local")
+        candidates = []
+        for scope in reversed(scopes[:scopes.index(self.frame.scope) + 1]):
             baseline = self._baseline(source, target, scope)
-        if baseline["document"] is None and scope == "project":
-            scope = "user"
-            baseline = self._baseline(source, target, scope)
-        document = baseline["document"]
+            if baseline["document"] is not None or baseline["binding"] is not None:
+                candidates.append((scope, baseline))
+                if baseline["binding"] is not None:
+                    break
+        if not candidates:
+            return None
+        scope, baseline = next((item for item in candidates if item[1]["binding"] is not None), candidates[0])
+        binding = baseline["binding"]
+        document, enabled = selected_relation(self.frame, relation_id(source, target)) if binding is not None else (baseline["document"], False)
         if document is None:
             return None
         payload = relation_payload(document)
         if payload is None:
             return None
         source_item, target_item = self.frame.items.get(source, {}), self.frame.items.get(target, {})
-        binding = baseline["binding"]
         inherited = scope == "user" and self.frame.scope != "user"
+        origins = self.frame.view.origins.get(document_identity(document), [])
+        source_scope = origins[-1]["scope"] if origins else scope
         return {"id": document_identity(document), "from": source, "to": target,
                 "fromName": source_item.get("name", source), "toName": target_item.get("name", target),
                 "text": payload.get("text", ""), "scope": scope, "inherited": inherited,
-                "enabled": binding is not None and binding.get("enabled", True),
-                "baseline": None if inherited else deepcopy(baseline),
+                "sourceScope": source_scope, "sourceVersion": document["release"]["version"],
+                "enabled": enabled,
+                "baseline": None if inherited else deepcopy({**baseline, "source": document}),
                 "fromRef": payload.get("skill", payload.get("subject")),
                 "targetRef": payload["adapter"].get("targetRef"),
                 "targetVersion": payload["adapter"].get("targetVersion")}
@@ -120,11 +142,12 @@ class CardRelations:
 
     # //// 核对关系正文与绑定的联合修改基线 [@x380kkm 2026-09-07] ////
     def _check_baseline(self, source: str, target: str, baseline: dict | None) -> dict:
-        current = self._baseline(source, target, self.frame.scope)
-        expected = {"document": None, "binding": None} if baseline is None else baseline
-        if not isinstance(expected, dict) or set(expected) != {"document", "binding"}:
+        edge = self._edge(source, target)
+        current = edge["baseline"] if edge is not None else {"document": None, "binding": None, "source": None}
+        expected = {"document": None, "binding": None, "source": None} if baseline is None else baseline
+        if not isinstance(expected, dict) or set(expected) != {"document", "binding", "source"}:
             raise CardError("relation_baseline", "关系修改需要正文与范围绑定的读取基线.")
-        if expected != current:
+        if not json_values_equal(expected, current):
             raise StorageConflictError(relation_id(source, target) + "@local:" + self.frame.scope)
         return current
 
@@ -133,10 +156,10 @@ class CardRelations:
         # //// 核对并发添加或移出的同关系绑定 [@x380kkm 2026-09-07] ////
         def verify_current(documents: list[dict]) -> None:
             expected = {document_identity(value): value for value in self.frame.local
-                        if value["kind"] == "PluginBinding" and value["plugin"]["id"] == plugin}
+                        if value.get("plugin", {}).get("id") == plugin or value.get("id") == plugin}
             current = {document_identity(value): value for value in documents
-                       if value["kind"] == "PluginBinding" and value["plugin"]["id"] == plugin}
-            if expected != current:
+                       if value.get("plugin", {}).get("id") == plugin or value.get("id") == plugin}
+            if not json_values_equal(expected, current):
                 raise StorageConflictError(plugin)
 
         return self.frame.store.apply_many(plans, verify_current=verify_current)
@@ -159,18 +182,25 @@ class CardRelations:
         if type(enabled) is not bool:
             raise CardError("relation_enabled", "关系启用状态需要布尔值.")
         previous = self._check_baseline(source_id, target_id, baseline)
+        selected = previous["source"]
+        state = "enabled" if enabled else "disabled"
+        if selected is not None and previous["binding"] is not None and relation_payload(selected).get("text") == text:
+            binding = configured_binding(self.frame, selected, state, self.frame.scope, previous["binding"])
+            plans = [self.frame.store.preview_put(binding, previous["binding"])]
+            results = self._save(plans, selected["id"])
+            refreshed = CardRelations(CardSubjects(self.frame.catalogs, self.frame.codex, self.frame.scope))
+            return {"changed": any(result["changed"] for result in results), "scope": self.frame.scope,
+                    "relation": refreshed._edge(source_id, target_id)}
         document = relation_document(source, target, text, self.frame.scope)
-        binding = usage_document(document, {"state": "enabled" if enabled else "disabled"}, previous["binding"], self.frame.scope)
+        binding = configured_binding(self.frame, document, state, self.frame.scope, previous["binding"])
+        binding["plugin"] = {"id": document["id"], "constraint": document["release"]["version"]}
         plans = self.frame.source_plans([source_id, target_id])
         plans.extend((self.frame.store.preview_put(document, previous["document"]),
                       self.frame.store.preview_put(binding, previous["binding"])))
         results = self._save(plans, document["id"])
-        edge = {"id": document_identity(document), "from": source_id, "to": target_id,
-                "fromName": source["name"], "toName": target["name"], "text": text,
-                "scope": self.frame.scope, "inherited": False, "enabled": enabled,
-                "baseline": {"document": document, "binding": binding},
-                "fromRef": source["ref"], "targetRef": target["ref"], "targetVersion": target["version"]}
-        return {"changed": any(result["changed"] for result in results), "scope": self.frame.scope, "relation": edge}
+        refreshed = CardRelations(CardSubjects(self.frame.catalogs, self.frame.codex, self.frame.scope))
+        return {"changed": any(result["changed"] for result in results), "scope": self.frame.scope,
+                "relation": refreshed._edge(source_id, target_id)}
 
     # //// 同时移出本层关系正文与其范围绑定 [@x380kkm 2026-09-07] ////
     def remove(self, source: str, target: str, baseline: dict | None) -> dict:
@@ -179,10 +209,13 @@ class CardRelations:
             project = CardSubjects(self.frame.catalogs, self.frame.codex, "project-local")
             return remove_project_relation(project, source, target, baseline)
         previous = self._check_baseline(source, target, baseline)
-        if previous["document"] is None:
+        if previous["document"] is None and previous["binding"] is None:
             raise CardError("relation_scope", "当前层没有可移出的参考关系.")
-        plans = [self.frame.store.preview_remove(document_identity(value), value)
-                 for value in previous.values() if value is not None]
-        results = self._save(plans, previous["document"]["id"])
+        selected = previous["binding"]
+        plugin = relation_id(source, target)
+        remaining = [value for value in plugin_bindings(self.frame.local, plugin) if value != selected]
+        values = ([selected] if selected is not None else []) + ([previous["document"]] if previous["document"] and not remaining else [])
+        plans = [self.frame.store.preview_remove(document_identity(value), value) for value in values]
+        results = self._save(plans, plugin) if plans else []
         return {"changed": any(result["changed"] for result in results), "scope": self.frame.scope,
                 "from": source, "to": target, "removed": True}

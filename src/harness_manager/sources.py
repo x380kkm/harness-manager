@@ -14,6 +14,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from .protocol import matches_version
+from .source_files import file_observation, opened_file_path
 
 MAX_CONTENT_BYTES = 1024 * 1024
 SOURCE_RESOLVER_VERSION = "1.0.0"
@@ -74,18 +75,35 @@ class SourceReader:
         self._git_location(self.approved_path(root))
 
     # //// 完整读取一个有大小边界的文本文件 [@x380kkm 2026-09-06] ////
-    def read_file(self, value: str | Path) -> tuple[Path, str]:
+    def read_file(self, value: str | Path, *, source_root: Path | None = None) -> tuple[Path, str]:
         path = self.approved_path(value)
         if not stat.S_ISREG(path.stat().st_mode):
             raise SourceError(f"来源需要普通文件: {path}")
         with path.open("rb") as stream:
+            opened = self.check_open_file(path, stream.fileno(), source_root)
             data = stream.read(MAX_CONTENT_BYTES + 1)
+            if file_observation(self.check_open_file(path, stream.fileno(), source_root)) != file_observation(opened):
+                raise SourceError(f"来源在读取期间发生变化: {path}")
         if len(data) > MAX_CONTENT_BYTES:
             raise SourceError(f"文件超过 {MAX_CONTENT_BYTES} 字节的单次读取上限, 需要通过来源工具读取完整语义单元.")
         try:
             return path, data.decode("utf-8-sig")
         except UnicodeDecodeError as error:
             raise SourceError(f"来源需要 UTF-8 文本: {path}") from error
+
+    # //// 核对已打开文件的实际位置与当前路径身份 [@x380kkm 2026-09-10] ////
+    def check_open_file(self, path: Path, descriptor: int, source_root: Path | None) -> os.stat_result:
+        actual = opened_file_path(descriptor)
+        self.check_access(actual)
+        if source_root is not None and not actual.is_relative_to(source_root):
+            raise SourceError("内容入口超出声明的来源目录.")
+        current = self.approved_path(path)
+        info = os.fstat(descriptor)
+        if actual != path or current != path or not os.path.samestat(info, path.stat()):
+            raise SourceError(f"来源路径在打开期间发生变化: {path}")
+        if not stat.S_ISREG(info.st_mode):
+            raise SourceError(f"来源需要普通文件: {path}")
+        return info
 
     # //// 读取声明指定的本地或固定 Git 内容 [@x380kkm 2026-09-06] ////
     def read(self, source: dict[str, Any], entry: str) -> dict[str, Any]:
@@ -110,7 +128,7 @@ class SourceReader:
 
     # //// 从当前本地内容取得完整读取单元 [@x380kkm 2026-09-06] ////
     def _read_path(self, root: Path, entry: Path, source: dict[str, Any]) -> dict[str, Any]:
-        path, content = self.read_file(root / entry)
+        path, content = self.read_file(root / entry, source_root=root)
         return {"content": content, "path": str(path), "mediaType": media_type(path),
                 "revision": "local:" + text_revision(str(path), content), "accessPaths": [str(root), str(path)]}
 

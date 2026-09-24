@@ -13,10 +13,13 @@ from unittest.mock import patch
 from harness_manager.host_ownership import HOOK_POINT, reconcile
 from harness_manager.host_storage import HostStorage, HostTransactionError
 from harness_manager.storage_errors import StorageConflictError, StorageValidationError
+from harness_manager.codex_hook_state import hook_state_key, parse_hook_states
 
 
 # //// 为归属调和编码完整文件快照 [@x380kkm 2026-09-08] ////
 def encoded(files):
+    if "hooks.json" in files:
+        files = {"config.toml": None, **files}
     return {name: base64.b64encode(content).decode("ascii") if content is not None else None for name, content in files.items()}
 
 
@@ -41,7 +44,10 @@ class HookMigrationOrderTests(unittest.TestCase):
                     output = json.loads(files["hooks.json"])
                     hidden = {entry["ref"] for entry in managed}
                     self.assertEqual([group["hooks"][0]["command"] for group in output["hooks"]["PreToolUse"]],
-                                     [entry["ref"] for entry in entries if entry["ref"] not in hidden])
+                                     [entry["ref"] for entry in entries])
+                    states = parse_hook_states(files["config.toml"])
+                    self.assertEqual([states.get(hook_state_key(Path.cwd() / "hooks.json", "PreToolUse", index, 0), {}).get("enabled", True)
+                                      for index in range(len(entries))], [entry["ref"] not in hidden for entry in entries])
                     self.assertEqual(output["metadata"], "private")
                 self.assertEqual(ownership, {})
 
@@ -71,7 +77,7 @@ class HookMigrationOrderTests(unittest.TestCase):
         original = {"hooks": {"PreToolUse": [group, external]}}
         _, ownership = reconcile({"hooks.json": b"{}"}, [entry],
                                  encoded({"hooks.json": json.dumps(original).encode()}), {}, Path.cwd())
-        current = {"hooks": {"PreToolUse": [external, added, added]}}
+        current = {"hooks": {"PreToolUse": [group, external, added, added]}}
         restored, released = reconcile({}, [], encoded({"hooks.json": json.dumps(current).encode()}), ownership, Path.cwd())
         self.assertEqual(json.loads(restored["hooks.json"])["hooks"]["PreToolUse"], [group, external, added, added])
         self.assertEqual(released, {})
@@ -85,7 +91,7 @@ class HookMigrationOrderTests(unittest.TestCase):
         original = {"hooks": {"PreToolUse": [external, managed, external]}}
         _, ownership = reconcile({"hooks.json": b"{}"}, entries[:1],
                                  encoded({"hooks.json": json.dumps(original).encode()}), {}, Path.cwd())
-        current = {"hooks": {"PreToolUse": [external, added, external]}}
+        current = {"hooks": {"PreToolUse": [external, managed, added, external]}}
         files, ownership = reconcile({"hooks.json": b"{}"}, entries[:2],
                                      encoded({"hooks.json": json.dumps(current).encode()}), ownership, Path.cwd())
         files, ownership = reconcile({"hooks.json": b"{}"}, entries[:1], encoded(files), ownership, Path.cwd())

@@ -107,6 +107,27 @@ class ContentDiscoveryTests(unittest.TestCase):
         self.assertTrue(any(reference.endswith("/missing.md") for reference in result["missing"]))
         self.assertTrue(any(note["code"] == "content.required-unit-unavailable" for note in result["diagnostics"]))
 
+    # //// 附加任务上下文保持 Skill 默认宿主且允许明确覆盖 [@x380kkm 2026-09-10] ////
+    def test_skill_list_merges_partial_context_and_keeps_explicit_host(self):
+        previous = next(document for document in self.manager.store.snapshot() if document["id"] == "binding:methods")
+        scoped = deepcopy(previous)
+        scoped["target"]["selector"] = {"host": "harness-manager", "task": "review"}
+        self.save(scoped, previous)
+        result = self.manager.list_skills(context={"task": "review"}, limit=1)
+        self.assertEqual(len(result["candidates"]), 1)
+        candidate = result["candidates"][0]
+        self.assertEqual(candidate["read"]["params"]["context"]["host"], "harness-manager")
+        self.assertEqual(candidate["read"]["params"]["context"]["task"], "review")
+        self.assertEqual(self.manager.invoke(candidate["read"]["method"], candidate["read"]["params"])["readiness"], "ready")
+        following = self.manager.list_skills(context={"task": "review"}, limit=1, cursor=result["next_cursor"])
+        self.assertNotEqual(candidate["ref"], following["candidates"][0]["ref"])
+        explicit = self.manager.list_skills(context={"host": "codex", "task": "review"})
+        self.assertEqual(explicit["candidates"], [])
+
+    # //// 空上下文与省略上下文选择同一默认宿主 [@x380kkm 2026-09-10] ////
+    def test_empty_skill_context_keeps_default_host(self):
+        self.assertEqual(self.manager.list_skills(context={})["candidates"], self.manager.list_skills()["candidates"])
+
 
 if __name__ == "__main__":
     unittest.main()

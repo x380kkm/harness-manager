@@ -131,10 +131,16 @@ export function renderInventoryInspector(container, model, selected, actions) {
   if (subject) {
     overview.append(textElement('h3', '使用范围'), cardControls(subject, actions));
     const configured = subject.management?.effectiveEnabled;
-    overview.append(textElement('p', configured === undefined || configured === null
+    if (item.kind !== 'hook') overview.append(textElement('p', configured === undefined || configured === null
       ? '此项使用设置尚未由管理器覆盖. 宿主继续读取原配置.'
       : `已保存${configured ? '开启' : '关闭'}设置. 实际文件状态见系统设置中的应用结果.`, 'card-hint'));
-    if (item.kind === 'hook') overview.append(textElement('p', '事件处理项由宿主执行. 新增或修改后, 按宿主要求审阅并信任.', 'card-hint'));
+    if (item.kind === 'hook') {
+      overview.append(textElement('p', '开关跟随 Codex 原生状态. 接管开启时, 选择开启或关闭会同步原生处理器. 信任与执行结果由 Codex 确认.', 'card-hint'));
+      for (const [index, handler] of (subject.management?.nativeHandlers || []).entries()) {
+        overview.append(properties([[`处理器 ${index + 1}`, handler.enabled ? '开启' : '关闭'],
+          ['信任记录', handler.trustRecorded ? '存在, 当前定义是否匹配由 Codex 确认' : '需要在 Codex 审阅']]));
+      }
+    }
   }
   if (item?.kind === 'hook' && !subject) overview.append(textElement('p', '这是宿主已有的 Hooks 文件. 可在 Hooks 页面新建独立事件配置, 或由 Agent 协助整理后加入模块.', 'card-hint'));
   if (overview.childNodes.length) container.append(overview);

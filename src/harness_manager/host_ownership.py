@@ -14,7 +14,9 @@ import tomlkit
 from tomlkit.items import Comment, Whitespace
 
 from .content_plan import SKILL_POINT
-from .host_hooks import HOOK_POINT, reconcile_hooks
+from .host_hooks import HOOK_POINT
+from .host_hook_sync import reconcile_hook_state
+from .host_storage import HOOK_STATE_NAME
 from .storage_errors import StorageConflictError, StorageValidationError
 
 RULE_FILE = "AGENTS.override.md"
@@ -291,7 +293,7 @@ def reconcile(targets: dict[str, bytes], contributions: list, baselineFiles: dic
               ownership: dict, configRoot: Path) -> tuple[dict, dict]:
     if (not isinstance(targets, dict) or not targets.keys() <= TARGET_FILES
             or any(not isinstance(value, bytes) for value in targets.values())
-            or not isinstance(ownership, dict) or not ownership.keys() <= {RULE_FILE, "skills", "hooks"}
+            or not isinstance(ownership, dict) or not ownership.keys() <= {RULE_FILE, "skills", "hooks", "hookState", "hookRequests"}
             or not isinstance(contributions, list) or any(not isinstance(entry, dict) for entry in contributions)
             or not Path(configRoot).is_absolute()):
         raise StorageValidationError("宿主归属调和需要固定目标, 独立开关和绝对配置目录.")
@@ -299,5 +301,8 @@ def reconcile(targets: dict[str, bytes], contributions: list, baselineFiles: dic
     reconcile_rules(result, baselineFiles, updated)
     reconcile_skills(result, contributions, baselineFiles, updated, Path(configRoot))
     if "hooks" in updated or "hooks.json" in result or any(entry.get("point") == HOOK_POINT for entry in contributions):
-        reconcile_hooks(result, contributions, current_file(baselineFiles, "hooks.json"), updated)
+        state_name = HOOK_STATE_NAME if HOOK_STATE_NAME in baselineFiles else CONFIG_FILE
+        config = result.get(state_name, current_file(baselineFiles, state_name))
+        result[state_name] = reconcile_hook_state(result, contributions, current_file(baselineFiles, "hooks.json"),
+                                                 config, updated, Path(configRoot) / "hooks.json")
     return result, updated

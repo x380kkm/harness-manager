@@ -42,9 +42,10 @@ def validate_collection(document: dict) -> None:
 def shared_card_ids(documents: list[dict]) -> set[str]:
     from .card_subjects import source_record
 
-    bindings = {document["plugin"]["id"]: document for document in documents
-                if document["kind"] == "PluginBinding"
-                and document["id"] == f"binding:project/{document['plugin']['id']}"}
+    bindings = {}
+    for document in documents:
+        if document["kind"] == "PluginBinding":
+            bindings.setdefault(document["plugin"]["id"], []).append(document)
     result = set()
     for document in documents:
         if document["kind"] != "Plugin" or document["id"] not in bindings:
@@ -53,7 +54,8 @@ def shared_card_ids(documents: list[dict]) -> set[str]:
         if record is not None and isinstance(record.get("id"), str):
             result.add(record["id"])
         references = {f"{document['id']}#{member['id']}" for member in document["contributions"]}
-        for extension in bindings[document["id"]].get("extensions", []):
+        extensions = [extension for binding in bindings[document["id"]] for extension in binding.get("extensions", [])]
+        for extension in extensions:
             payload = extension.get("payload")
             if (extension["contract"]["id"] == CARD_IDENTITY_CONTRACT and isinstance(payload, dict)
                     and isinstance(payload.get("itemId"), str) and payload["itemId"]
