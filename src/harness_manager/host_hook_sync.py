@@ -121,7 +121,8 @@ def observe_original_choices(record: dict, prior: list[dict], config: bytes | No
 
 # //// 保留定义并在用户配置中同步原生开关 [@x380kkm 2026-09-10] ////
 def reconcile_hook_state(targets: dict, contributions: list, content: bytes | None,
-                         config: bytes | None, ownership: dict, path: Path) -> bytes | None:
+                         config: bytes | None, ownership: dict, path: Path,
+                         hook_file: str = "hooks.json") -> bytes | None:
     before = hooks_document(content)
     record = state_record(ownership)
     native_path = Path(record.get("path", path))
@@ -141,8 +142,8 @@ def reconcile_hook_state(targets: dict, contributions: list, content: bytes | No
         if (identity not in managed or identity in native) and matching_positions(before.get("hooks", {}), value):
             record["originals"].setdefault(identity, group_states(config, before, native_path, value))
     present = [{**entry, "enabled": True} if entry.get("point") == HOOK_POINT else entry for entry in contributions]
-    reconcile_hooks(targets, present, content, ownership)
-    after = hooks_document(targets["hooks.json"])
+    reconcile_hooks(targets, present, content, ownership, hook_file)
+    after = hooks_document(targets[hook_file])
     overrides = {}
     for identity, value in desired.items():
         index = matching_positions(after.get("hooks", {}), value)[0]

@@ -76,12 +76,6 @@ def validate_shared_collections(documents: list[dict]) -> None:
                                       f"共享集合 {document['metadata']['name']} 中的卡片 {node['itemId']} 需要先设为项目共享.")
 
 
-# //// 取得有效层级并保留当前编辑层的原文基线 [@x380kkm 2026-09-07] ////
-def collection_inventory(catalogs, scope: str, items: list[dict]) -> tuple[list[dict], list[dict]]:
-    view = catalogs.for_scope(scope)
-    return collections_from_view(view, scope, items)
-
-
 # //// 使用已读取的声明层生成集合与缺失引用提示 [@x380kkm 2026-09-07] ////
 def collections_from_view(view, scope: str, items: list[dict]) -> tuple[list[dict], list[dict]]:
     available = {item["id"] for item in items}

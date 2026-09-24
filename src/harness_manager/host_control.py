@@ -8,6 +8,7 @@ from difflib import unified_diff
 import tomllib
 from uuid import uuid4
 
+from .host_profiles import CODEX, HostProfile
 from .host_projection import compile_host
 from .host_hooks import HOOK_POINT
 from .host_paths import host_storage
@@ -23,8 +24,13 @@ from .storage_errors import StorageConflictError, StorageValidationError, Storag
 EXCLUDED_CATALOG_SCOPES = {"user": frozenset({"project", "project-local"}), "project": frozenset({"project-local"})}
 
 
+# //// 按优先顺序给出宿主的说明候选文件 [@x380kkm 2026-09-24] ////
+def instruction_candidates(profile: HostProfile) -> list[str]:
+    return list(dict.fromkeys([profile.rule_file, profile.instruction_file]))
+
+
 # //// 汇总文件差异并限定正文展示范围 [@x380kkm 2026-09-07] ////
-def file_preview(targets: dict, baseline: dict) -> list[dict]:
+def file_preview(targets: dict, baseline: dict, profile: HostProfile = CODEX) -> list[dict]:
     files = []
     for name, after in targets.items():
         encoded = baseline["files"].get(name)
@@ -33,7 +39,7 @@ def file_preview(targets: dict, baseline: dict) -> list[dict]:
             continue
         record = {"name": name, "operation": "移出" if after is None else "创建" if before is None else "替换",
                   "beforeBytes": len(before) if before else 0, "afterBytes": len(after) if after else 0}
-        if name in {"AGENTS.md", "AGENTS.override.md"}:
+        if name in {profile.instruction_file, profile.rule_file}:
             record["diff"] = "\n".join(unified_diff((before or b"").decode("utf-8-sig", errors="replace").splitlines(),
                                                        (after or b"").decode("utf-8-sig", errors="replace").splitlines(), n=2))
         else:
@@ -70,13 +76,16 @@ def verify_catalog_inputs(catalogs, inputs: dict[str, list[dict]]) -> None:
 
 # //// 管理接管开关和带备份的宿主应用入口 [@x380kkm 2026-09-07] ////
 class HostControl:
-    def __init__(self, catalogs, codex, reader) -> None:
+    def __init__(self, catalogs, codex, reader, profile: HostProfile = CODEX,
+                 host_root=None) -> None:
         self.catalogs, self.codex, self.reader = catalogs, codex, reader
+        self.profile = profile
+        self.host_root = codex.root if host_root is None else host_root
         self.previews = {}
 
     # //// 将用户或选定项目映射到固定宿主目录 [@x380kkm 2026-09-07] ////
     def storage(self, scope: str) -> HostStorage:
-        return host_storage(self.catalogs, self.codex.root, scope)
+        return host_storage(self.catalogs, self.host_root, scope, self.profile)
 
     # //// 返回接管状态和可选择的恢复记录 [@x380kkm 2026-09-07] ////
     def status(self, scope: str = "user") -> dict:
@@ -91,7 +100,8 @@ class HostControl:
 
     # //// 合并进程授权与宿主已发现的来源目录 [@x380kkm 2026-09-08] ////
     def source_reader(self) -> HostSourceReader:
-        directories = [self.catalogs.user.workspace / ".agents/skills", self.codex.root / "skills", self.codex.root / "plugins/cache"]
+        directories = [self.catalogs.user.workspace / ".agents/skills", self.host_root / "skills",
+                       self.host_root / "plugins/cache"]
         roots = [*self.reader.roots, *(path for path in directories if path.is_dir() and not path.is_symlink() and not path.is_junction())]
         return HostSourceReader(self.reader.workspace, roots)
 
@@ -99,38 +109,39 @@ class HostControl:
     def compile(self, scope: str) -> dict:
         reader = self.source_reader()
         catalogs = HostCatalogInputs(self.catalogs, scope)
-        global_inputs = self.storage("user").capture_instructions(["AGENTS.override.md", "AGENTS.md"]) if scope != "user" else None
-        options = {"global_texts": {str(self.codex.root / name): (decode_file(value) or b"").decode("utf-8-sig")
+        candidates = instruction_candidates(self.profile)
+        global_inputs = self.storage("user").capture_instructions(candidates) if scope != "user" else None
+        options = {"global_texts": {str(self.host_root / name): (decode_file(value) or b"").decode("utf-8-sig")
                                     for name, value in global_inputs.items()}} if global_inputs is not None else {}
-        compiled = compile_host(catalogs, self.codex, reader, scope, **options)
+        compiled = compile_host(catalogs, self.codex, reader, scope, profile=self.profile, **options)
         compiled["catalogReads"] = catalogs.documents
         compiled["sourceReads"] = reader.observations
         if global_inputs is not None:
             compiled["globalInstructionReads"] = global_inputs
         if "instructions" in compiled:
             storage = self.storage(scope)
-            previous = storage.read_ownership().get("AGENTS.override.md")
+            previous = storage.read_ownership().get(self.profile.rule_file)
             try:
                 name, content, inputs, configurations = self.instruction_source(scope, storage, previous)
                 rendered, source = compose_instructions(compiled["instructions"], content, storage.target_root / name,
                                                         previous.get("source") if previous else None)
-                compiled["targets"]["AGENTS.override.md"] = rendered
+                compiled["targets"][self.profile.rule_file] = rendered
                 compiled.update(instructionReads=inputs, instructionSource=source, configurationReads=configurations)
             except (StorageError, ValueError, OSError) as error:
                 compiled["targets"] = {}
                 compiled["diagnostics"].append({"severity": "error", "code": "host_instruction_source",
-                                                "subject": "AGENTS.override.md", "message": str(error)})
+                                                "subject": self.profile.rule_file, "message": str(error)})
         return compiled
 
     # //// 选择覆盖前的实际说明来源并保存读取基线 [@x380kkm 2026-09-08] ////
     def instruction_source(self, scope: str, storage: HostStorage, previous: dict | None) -> tuple:
-        names = ["AGENTS.override.md", "AGENTS.md"]
+        names = instruction_candidates(self.profile)
         configurations = {}
         if scope != "user":
             configurations = {"user": self.storage("user").capture_configuration(), scope: storage.capture_configuration()}
             fallbacks = []
             for files in configurations.values():
-                config = tomllib.loads((decode_file(files["config.toml"]) or b"").decode("utf-8-sig"))
+                config = tomllib.loads((decode_file(files[self.profile.config_file]) or b"").decode("utf-8-sig"))
                 fallbacks = config.get("project_doc_fallback_filenames", fallbacks)
             if not isinstance(fallbacks, list) or any(not isinstance(name, str) for name in fallbacks):
                 raise StorageValidationError("说明候选文件需要文件名数组.")
@@ -138,12 +149,13 @@ class HostControl:
         inputs = storage.capture_instructions(names)
         candidates = dict(inputs)
         if previous is not None:
-            candidates["AGENTS.override.md"] = previous["before"]
+            candidates[self.profile.rule_file] = previous["before"]
         for name in names:
             content = decode_file(candidates[name])
             if content and content.decode("utf-8-sig").strip():
                 return name, content, inputs, configurations
-        return "AGENTS.md", decode_file(candidates["AGENTS.md"]), inputs, configurations
+        return (self.profile.instruction_file, decode_file(candidates[self.profile.instruction_file]),
+                inputs, configurations)
 
     # //// 在提交边界核对编译正文及其说明和配置输入 [@x380kkm 2026-09-08] ////
     def verify_compilation_inputs(self, inputs: dict, written: dict | None = None) -> None:
@@ -157,10 +169,10 @@ class HostControl:
         verify_source_reads(self.source_reader(), inputs.get("sourceReads", []), written_paths)
         for scope, files in inputs.get("configurationReads", {}).items():
             expected = dict(files)
-            if scope == applying_scope and "config.toml" in written:
-                expected["config.toml"] = encode_file(written["config.toml"])
-            if scope == "user" and HOOK_STATE_NAME in written:
-                expected["config.toml"] = encode_file(written[HOOK_STATE_NAME])
+            if scope == applying_scope and self.profile.config_file in written:
+                expected[self.profile.config_file] = encode_file(written[self.profile.config_file])
+            if scope == "user" and self.profile.hook_state_name in written:
+                expected[self.profile.config_file] = encode_file(written[self.profile.hook_state_name])
             if self.storage(scope).capture_configuration() != expected:
                 raise StorageConflictError("host-instruction-config")
         global_inputs = inputs.get("globalInstructionReads", {})
@@ -228,7 +240,7 @@ class HostControl:
             self.previews.pop(next(iter(self.previews)))
         identity = uuid4().hex
         self.previews[identity] = {"scope": scope, "targets": targets, "baseline": baseline, "backupId": backup_id}
-        return {"planId": identity, "scope": scope, "files": file_preview(targets, baseline),
+        return {"planId": identity, "scope": scope, "files": file_preview(targets, baseline, self.profile),
                 "backupId": backup_id, "contributions": contributions or [], "diagnostics": []}
 
     # //// 编译有效配置并准备文件基线和字段归属 [@x380kkm 2026-09-08] ////
@@ -239,14 +251,15 @@ class HostControl:
         storage = self.storage(scope)
         ownership = storage.read_ownership()
         capture_targets = dict(compiled["targets"])
-        if "AGENTS.override.md" in ownership:
-            capture_targets.setdefault("AGENTS.override.md", None)
+        if self.profile.rule_file in ownership:
+            capture_targets.setdefault(self.profile.rule_file, None)
         if "skills" in ownership:
-            capture_targets.setdefault("config.toml", None)
-        if "hooks" in ownership:
-            capture_targets.setdefault("hooks.json", None)
+            capture_targets.setdefault(self.profile.config_file, None)
         if "hooks" in ownership or any(entry.get("point") == HOOK_POINT for entry in compiled["contributions"]):
-            capture_targets.setdefault("config.toml" if scope == "user" else HOOK_STATE_NAME, None)
+            capture_targets.setdefault(self.profile.hook_file, None)
+        if self.profile.hook_state_name and ("hooks" in ownership
+                                             or any(entry.get("point") == HOOK_POINT for entry in compiled["contributions"])):
+            capture_targets.setdefault(self.profile.config_file if scope == "user" else self.profile.hook_state_name, None)
         baseline = storage.capture(capture_targets)
         self.verify_compilation_inputs(compiled)
         if ownership != storage.read_ownership():
@@ -263,11 +276,12 @@ class HostControl:
                 return compiled, None
             if not selected["hookRequests"]:
                 selected.pop("hookRequests")
-        targets, updated = reconcile(compiled["targets"], compiled["contributions"], baseline["files"], selected, config_root)
+        targets, updated = reconcile(compiled["targets"], compiled["contributions"], baseline["files"], selected,
+                                     config_root, self.profile)
         if "instructionSource" in compiled:
             if storage.capture_instructions(list(compiled["instructionReads"])) != compiled["instructionReads"]:
                 raise StorageConflictError("host-instruction-source")
-            updated["AGENTS.override.md"]["source"] = compiled["instructionSource"]
+            updated[self.profile.rule_file]["source"] = compiled["instructionSource"]
             baseline["instructionReads"] = compiled["instructionReads"]
         baseline["files"] = {name: baseline["files"][name] for name in targets}
         plan = {"scope": scope, "targets": targets, "baseline": baseline, "backupId": None,
@@ -297,7 +311,7 @@ class HostControl:
                 if plan is None:
                     result["status"] = "blocked"
                 else:
-                    result["files"] = file_preview(plan["targets"], plan["baseline"])
+                    result["files"] = file_preview(plan["targets"], plan["baseline"], self.profile)
                     result["ownershipChanged"] = plan["ownership"] != plan["previousOwnership"]
                     if result["files"] or result["ownershipChanged"]:
                         result["status"] = "pending"
@@ -343,3 +357,45 @@ class HostControl:
                                    verify_inputs=lambda written: self.verify_compilation_inputs(plan, written))
         self.previews.pop(plan_id)
         return {**result, **self.status(plan["scope"])}
+
+
+# //// 按宿主身份路由接管操作 [@x380kkm 2026-09-24] ////
+class HostRouter:
+    def __init__(self, controls: dict[str, HostControl]) -> None:
+        self.controls = controls
+
+    # //// 取得指定宿主的接管控制器 [@x380kkm 2026-09-24] ////
+    def control(self, host: str = CODEX.id) -> HostControl:
+        control = self.controls.get(host)
+        if control is None:
+            raise StorageValidationError(f"未登记的宿主身份: {host}.")
+        return control
+
+    # //// 固定首次使用前的宿主配置恢复点 [@x380kkm 2026-09-24] ////
+    def initialize(self, scope: str = "user", host: str = CODEX.id) -> dict:
+        return self.control(host).initialize(scope)
+
+    # //// 返回接管状态和可选择的恢复记录 [@x380kkm 2026-09-24] ////
+    def status(self, scope: str = "user", host: str = CODEX.id) -> dict:
+        return {**self.control(host).status(scope), "host": host}
+
+    # //// 只读比较宿主文件与当前配置 [@x380kkm 2026-09-24] ////
+    def inspect(self, scope: str = "user", host: str = CODEX.id) -> dict:
+        return self.control(host).inspect(scope)
+
+    # //// 按控制基线切换接管开关 [@x380kkm 2026-09-24] ////
+    def set_enabled(self, enabled: bool, scope: str = "user", baseline: dict | None = None,
+                    host: str = CODEX.id) -> dict:
+        return self.control(host).set_enabled(enabled, scope, baseline)
+
+    # //// 编译候选配置并保留本次计划 [@x380kkm 2026-09-24] ////
+    def preview(self, scope: str = "user", host: str = CODEX.id) -> dict:
+        return self.control(host).preview(scope)
+
+    # //// 按备份身份编译恢复计划 [@x380kkm 2026-09-24] ////
+    def preview_restore(self, id: str, scope: str = "user", host: str = CODEX.id) -> dict:
+        return self.control(host).preview_restore(id, scope)
+
+    # //// 提交当前进程持有的宿主计划 [@x380kkm 2026-09-24] ////
+    def apply(self, plan_id: str, host: str = CODEX.id) -> dict:
+        return self.control(host).apply(plan_id)

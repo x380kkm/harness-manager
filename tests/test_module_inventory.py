@@ -9,7 +9,8 @@ import unittest
 
 from harness_manager.card_subjects import source_document
 from harness_manager.catalogs import Catalogs
-from harness_manager.module_inventory import PRESENTATION_CONTRACT, module_inventory
+from harness_manager.module_contexts import PRESENTATION_CONTRACT
+from harness_manager.module_inventory import module_inventory
 from harness_manager.protocol import document_identity
 from test_projection import make_plugin
 

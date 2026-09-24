@@ -83,9 +83,17 @@ TOPICS = {
     },
     "host": {
         "title": "宿主应用和备份恢复",
-        "text": "host.status 返回 enabled, backups 与 baseline. 接管默认开启. "
+        "text": "host.* 方法的 host 参数选择宿主, 默认 codex, 另一个登记宿主是 claude; 各宿主存档分目录保存, 互不影响. "
+                "host.status 返回 enabled, backups 与 baseline, 并回带当前 host. 接管默认开启. "
                 "host.inspect 只读比较保存配置与宿主文件, 返回 pending, unchanged, blocked, disabled 或 uninitialized, 保留已有预览令牌. "
-                "host.initialize 一次存档首次使用前的 AGENTS.md, AGENTS.override.md, config.toml 和 hooks.json, 包括空文件与不存在状态, 宿主文件保持原样. "
+                "host.initialize 一次存档首次使用前该宿主的全部说明与配置文件, 包括空文件与不存在状态, 宿主文件保持原样. "
+                "Codex 存档 AGENTS.md, AGENTS.override.md, config.toml 与 hooks.json; Claude Code 存档 CLAUDE.md 与 settings.json. "
+                "Codex 保留手写的 AGENTS.md 作为原文, 管理器只写 AGENTS.override.md; Claude Code 没有覆盖层, 管理器直接管理 CLAUDE.md, 接管前的原文存入恢复点并在撤销时写回. "
+                "Hook 定义与主配置同文件时只改写 hooks 键, 其余字段逐字段保留; 这类宿主没有独立开关, 启停以写入与否表达, 未取得启用请求的事件组不写入, 因此本机默认关闭. "
+                "宿主缺少某类载体时该成员以 severity=warning 的 host_capability_unsupported 跳过, 其余成员照常写出; 只有 severity=error 的诊断清空整份输出. "
+                "claude 宿主的 Skill 由目录放置决定而非配置行, 按跳过处理; 其项目范围需要能读取全局规则的适配器, 仍按阻断处理. "
+                "绑定的 target.selector.host 决定内容投向哪个宿主; 未限定 host 的绑定对所有宿主生效, 同一内容投向两个宿主时各用限定 host 的独立绑定. "
+                "保存声明后的自动同步当前只覆盖 codex, claude 用 host.preview 与 host.apply 显式应用. "
                 "后续保存保留这份原始恢复点. initial 反映创建时的完整配置, 恢复前核对其文件差异并保全需要保留的当前配置. "
                 "host.preview 返回文件摘要与 planId; 在同一 MCP 或 RPC 进程将 planId 作为 plan_id 传给 host.apply. "
                 "普通 host.apply 要求接管已开启. 关闭或未初始化时, host.inspect 只报告状态, 配置审阅使用 host.preview. "
@@ -119,7 +127,7 @@ TOPICS = {
                 "关系的两端均共享时关系与 Adapter 才进入共享文件. "
                 "--read-root 额外授予来源读取路径, 不改变声明写入位置; scope 与 context 只筛选内容. "
                 "Git 元数据链接, 对象存储和配置中声明的附加文件均需要读取授权, 缓存续读也核对当前 Git 存储. "
-                "项目文件能表达的规则范围由宿主编译检查. Hook 执行仍需满足 Codex 的信任要求."
+                "项目文件能表达的规则范围由宿主编译检查. 写入 Codex 的 Hook 执行仍需满足其信任要求."
     },
     "relocation": {
         "title": "项目搬移后的配置关联",
@@ -147,6 +155,8 @@ TOPICS = {
                 "连接使用当前 Python 环境及明确的工作目录; 迁移安装后重新生成. "
                 "可在启动命令前添加 --workspace, --user-root 与重复的 --read-root. "
                 "MCP 客户端独立启动 Python 服务, 与桌面面板共享本机管理目录. 接管开关与 MCP 连接分别设置. "
+                "Claude Code 不读取该 TOML 片段, 用 claude mcp add --scope user harness-manager -- <仓库>/.venv/Scripts/python.exe -m harness_manager.cli mcp --compact 登记同一服务, "
+                "再用 claude mcp list 确认连接. "
                 "Codex MCP 接入: https://learn.chatgpt.com/docs/extend/mcp"
     },
     "errors": {

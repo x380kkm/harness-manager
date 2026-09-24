@@ -26,7 +26,8 @@ from .projection import discover, project_content
 from .read_statistics import ReadStatistics
 from .module_inventory import modules_from_view
 from .inventory_groups import group_inventory
-from .host_control import HostControl
+from .host_control import HostControl, HostRouter
+from .host_profiles import CLAUDE, CODEX, host_root
 from .module_operations import ModuleOperations
 from .project_relocation import ProjectRelocation
 from .protocol import document_identity, document_name, schema
@@ -64,6 +65,11 @@ class Manager:
         self.cards = CardOperations(self.catalogs, self.codex)
         self.statistics = ReadStatistics(self.store.workspace)
         self.host = HostControl(self.catalogs, self.codex, self.reader)
+        self.hosts = HostRouter({
+            CODEX.id: self.host,
+            CLAUDE.id: HostControl(self.catalogs, self.codex, self.reader, CLAUDE,
+                                   host_root(CLAUDE, self.store.workspace)),
+        })
         self.modules = ModuleOperations(self.catalogs, self.codex)
         self.relocation = ProjectRelocation(self.catalogs)
         self.agent = AgentInterface(self)
@@ -462,8 +468,10 @@ class Manager:
         return {
             "agent.capabilities": self.agent.capabilities, "agent.help": self.agent.help,
             "project.relocate_preview": self.relocation.preview, "project.relocate_apply": self.relocation.apply,
-            "host.initialize": self.host.initialize, "host.status": self.host.status, "host.inspect": self.host.inspect, "host.set_enabled": self.host.set_enabled,
-            "host.preview": self.host.preview, "host.preview_restore": self.host.preview_restore, "host.apply": self.host.apply,
+            "host.initialize": self.hosts.initialize, "host.status": self.hosts.status,
+            "host.inspect": self.hosts.inspect, "host.set_enabled": self.hosts.set_enabled,
+            "host.preview": self.hosts.preview, "host.preview_restore": self.hosts.preview_restore,
+            "host.apply": self.hosts.apply,
             "module.describe": self.modules.describe, "module.preview": self.modules.preview, "module.apply": self.modules.apply,
             "card.inventory": self.snapshot_cards, "card.describe": self.cards.describe,
             "card.configure": self.cards.configure, "card.relations": self.cards.relations,

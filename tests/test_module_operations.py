@@ -9,7 +9,8 @@ import unittest
 from unittest.mock import patch
 
 from harness_manager.card_subjects import source_document
-from harness_manager.module_inventory import PRESENTATION_CONTRACT, module_inventory, module_presentation
+from harness_manager.module_contexts import PRESENTATION_CONTRACT
+from harness_manager.module_inventory import module_inventory, module_presentation
 from harness_manager.module_operations import ModuleError, ModuleOperations
 from harness_manager.protocol import document_identity
 from harness_manager.service import Manager

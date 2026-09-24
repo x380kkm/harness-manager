@@ -44,6 +44,25 @@ uv run harness-manager guide
 
 接管把已登记且选中启用的内容写入宿主文件. 卡片的启用绑定决定使用哪些内容, 接管开关决定保存后是否自动应用. `host.status.enabled=true` 是默认控制状态; 实际应用结果由绑定, `lastApplied` 和宿主差异共同确认.
 
+`host.*` 方法的 `host` 参数选择写入哪个宿主, 默认 `codex`. 当前登记 `codex` 与 `claude` 两个宿主, 各自的存档按作用域身份分目录保存, 一个宿主的接管与恢复不影响另一个.
+
+| 宿主 | 管理器写入的说明 | 主配置 | Hook 定义 | Hook 开关 |
+| --- | --- | --- | --- | --- |
+| `codex` | `AGENTS.override.md` | `config.toml` | `hooks.json` | `config.toml` 的 `[hooks.state]` |
+| `claude` | `CLAUDE.md` | `settings.json` | `settings.json` | 写入与否 |
+
+Codex 保留用户手写的 `AGENTS.md` 作为原文来源, 管理器只写 `AGENTS.override.md`. Claude Code 没有对应的覆盖层, 管理器直接管理 `CLAUDE.md`: 首次接管把原文存入恢复点, 之后的写入更新受管正文, 撤销接管时写回原文.
+
+Hook 定义与主配置同文件时, 管理器只改写 `hooks` 键, 主配置的其余字段逐字段保留. 这类宿主没有独立的逐处理器开关, 启停以写入与否表达: 未取得启用请求的事件组不写入, 主配置保持原样. 因此新接管的 Hook 在本机默认关闭, 需要显式启用请求才写出.
+
+宿主根目录为 `~/.codex` 与 `~/.claude`. 用户目录是当前主目录时, `CODEX_HOME` 与 `CLAUDE_CONFIG_DIR` 分别覆盖对应位置.
+
+宿主缺少某类载体时, 该成员以 `severity=warning` 的 `host_capability_unsupported` 跳过, 其余成员照常写出; 阻断只由 `severity=error` 的诊断产生, 此时整份输出为空. `claude` 宿主的 Skill 由目录放置决定而非配置行, 因此按跳过处理; 该宿主的项目范围需要能够读取其全局规则的适配器, 仍按阻断处理.
+
+保存声明后的自动同步当前只覆盖 `codex`, `claude` 使用 `host.preview` 与 `host.apply` 显式应用.
+
+绑定的 `target.selector.host` 决定内容投向哪个宿主. 未限定 `host` 的绑定对所有宿主生效; 同一内容需要分别投向两个宿主时, 各自使用限定 `host` 的独立绑定, 避免同范围的重复绑定产生 `binding_conflict`.
+
 先读取本机状态和首次接管说明:
 
 ```powershell
@@ -75,6 +94,15 @@ uv run harness-manager --workspace C:/work/project --read-root C:/work/skills co
 路径替换为实际项目和来源. `connection --format json` 输出结构化配置; `connection --full` 生成完整工具列表的连接. 源码更新后运行 `uv sync` 并重启 MCP 服务; 桌面依赖通过 `desktop` 目录中的 `npm ci` 更新. 安装目录或 Python 环境迁移后重新生成连接. Codex 的配置字段见 [官方配置参考](https://learn.chatgpt.com/docs/config-file/config-reference).
 
 `connection` 只生成连接片段. 在本机配置中保存片段属于单独的配置修改; 用 `codex mcp list` 查看登记的服务器, 在客户端的 MCP 页面确认连接状态. 生成的绝对路径用于当前机器, 各机器分别生成自己的连接配置.
+
+Claude Code 使用自己的 MCP 登记方式, 不读取上面的 TOML 片段. 在任意目录运行以下命令登记同一服务, `--scope user` 让全部项目共用:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+claude mcp add --scope user harness-manager -- <仓库>/.venv/Scripts/python.exe -m harness_manager.cli mcp --compact
+```
+
+`<仓库>` 替换为本仓库的绝对路径. 用 `claude mcp list` 确认连接状态. 包以可编辑方式安装, 该命令在任意工作目录都能启动服务.
 
 默认连接使用 `mcp --compact`, 提供五个入口:
 
@@ -151,7 +179,7 @@ if ((Read-Host '输入 apply 确认保存') -eq 'apply') {
 
 ## 宿主预览与恢复
 
-`host.status` 返回接管状态, 备份摘要和控制基线. 接管默认开启. `host.initialize` 一次存档首次使用前的 `AGENTS.md`, `AGENTS.override.md`, `config.toml` 和 `hooks.json`, 包括空文件与原本不存在的状态, 宿主文件保持原样. 后续保存保留这份原始恢复点.
+`host.status` 返回接管状态, 备份摘要和控制基线. 接管默认开启. `host.initialize` 一次存档首次使用前该宿主的全部说明与配置文件, 包括空文件与原本不存在的状态, 宿主文件保持原样. Codex 存档 `AGENTS.md`, `AGENTS.override.md`, `config.toml` 和 `hooks.json`; Claude Code 存档 `CLAUDE.md` 和 `settings.json`. 后续保存保留这份原始恢复点.
 
 `host.set_enabled` 使用 `host.status` 返回的 `baseline` 作为控制基线. 关闭接管时保留宿主当前文件, 开启时立即尝试应用保存的配置. 开关变化后重新取得状态和预览. 管理器退出后, 宿主继续读取已经写出的文件.
 
@@ -171,7 +199,7 @@ uv run harness-manager call host.status
 
 `initial` 保存创建恢复点时的整份配置, 可能早于后来的本机修改. 恢复它会影响备份列出的说明文件, 主配置和 Hooks. 接管前, 将当前宿主文件, 当前配置层的声明文件与 `host.status.backupRoot` 的管理记录另存到独立的私有备份目录, 并记录原本缺失的文件. 恢复前逐项核对预览差异. 恢复成功后, 已登记声明和绑定继续保留, 可另行决定是否再次接管.
 
-规则文件的覆盖顺序和项目配置的加载由 Codex 决定. Hook 写入后仍需满足 Codex 的信任要求才能执行.
+规则文件的覆盖顺序和项目配置的加载由对应宿主决定. 写入 Codex 的 Hook 仍需满足其信任要求才能执行.
 
 Hook 卡片读取 Codex 用户配置 `hooks.state` 中的逐处理器开关. 在 Codex 修改开关后, 刷新卡片即可读取相同选择; `nativeState=mixed` 表示同组处理器的开关不同. `card.configure` 沿用完整 `configBaseline`, 接管开启时把明确启停写入原生状态, 接管关闭时保存待应用选择. 普通同步保留原生选择, 两端冲突时读取诊断并重新确认. 启停保留事件组位置; 编辑后的命令按 Codex 的信任要求重新审阅. `nativeEnabled` 表示配置开关, 执行结果由 Codex 确认.
 

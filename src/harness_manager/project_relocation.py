@@ -13,12 +13,13 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import NAMESPACE_URL, uuid5
 
 from .catalogs import Catalogs, document_locations, external_project_locations, portable_project_document, project_private_store
 from .card_relations import relation_payload
 from .card_sharing import reference_plugin
 from .card_subjects import CardError
+from .host_paths import project_host_storage
+from .host_profiles import CODEX, HostProfile
 from .host_storage import HostStorage, RECOVERY_STATES
 from .codex_inventory import CodexInventory
 from .project_hook_relocation import relocate_host_hooks
@@ -195,24 +196,23 @@ def relocation_recovery(error: CardError, old_private, old_host, stores) -> Relo
 
 
 # //// 按项目位置生成宿主存档入口 [@x380kkm 2026-09-08] ////
-def project_host(user_root: Path, project: Path) -> HostStorage:
-    return HostStorage(user_root, project, "codex-" + uuid5(NAMESPACE_URL, project.as_uri()).hex,
-                       config_subdir=".codex", hook_state_root=CodexInventory(user_root).root)
+def project_host(user_root: Path, project: Path, profile: HostProfile = CODEX) -> HostStorage:
+    return project_host_storage(user_root, project, CodexInventory(user_root).root, profile)
 
 
 # //// 从宿主存档恢复旧 Windows 目录的原始拼写 [@x380kkm 2026-09-08] ////
-def previous_project_host(user: Store, old: Path) -> HostStorage:
-    host = project_host(user.workspace, old)
+def previous_project_host(user: Store, old: Path, profile: HostProfile = CODEX) -> HostStorage:
+    host = project_host(user.workspace, old, profile)
     if not old.drive or host.store.catalog.exists():
         return host
     matches = []
-    for directory in sorted((user.directory / "hosts").glob("codex-*")):
+    for directory in sorted((user.directory / "hosts").glob(f"{profile.id}-*")):
         catalog = Store(user.workspace, document_identity, lambda value: None, catalog_directory=directory)
         locations = {value["targetRoot"] for value in catalog.snapshot()
-                     if value.get("configSubdir") == ".codex" and isinstance(value.get("targetRoot"), str)
+                     if value.get("configSubdir") == profile.config_subdir and isinstance(value.get("targetRoot"), str)
                      and Path(value["targetRoot"]) == old}
         for location in locations:
-            candidate = project_host(user.workspace, Path(location))
+            candidate = project_host(user.workspace, Path(location), profile)
             if candidate.store.catalog != catalog.catalog:
                 raise RelocationError("relocation_host_conflict", "旧位置宿主存档的目录身份与记录位置需要保持一致.")
             matches.append(candidate)

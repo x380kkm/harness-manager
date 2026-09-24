@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from pathlib import Path
 from typing import Any
 
 import yaml

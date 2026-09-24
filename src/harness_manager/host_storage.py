@@ -24,11 +24,12 @@ from .storage_errors import (
     StorageBoundaryError, StorageConflictError, StorageIOError, StorageValidationError,
 )
 from .host_storage_records import (
-    HOOK_STATE_NAME, MAX_FILE_BYTES, RECOVERY_STATES, SOURCE_NAMES, TARGET_NAMES,
+    HOOK_STATE_NAME, MAX_FILE_BYTES, RECOVERY_STATES,
     decode_file as _decode, encode_file as _encode, validate_files, validate_record,
 )
 from .host_hook_restore import merge_project_hook_state, restore_project_hook_definitions
 from .host_file_delete import remove_host_file
+from .host_profiles import CODEX, HostProfile
 
 
 # //// 保存宿主事务的备份身份和恢复状态 [@x380kkm 2026-09-07] ////
@@ -60,24 +61,26 @@ def _check_chain(path: Path, *, directory: bool = False) -> None:
 class HostStorage:
     # //// 固定宿主路径映射与个人存档位置 [@x380kkm 2026-09-10] ////
     def __init__(self, user_root: Path, target_root: Path, scope_id: str, *, config_subdir: str = "",
-                 hook_state_root: Path | None = None) -> None:
+                 hook_state_root: Path | None = None, profile: HostProfile = CODEX) -> None:
         if not isinstance(scope_id, str) or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}", scope_id):
             raise StorageValidationError("宿主作用域身份需要由字母, 数字, 下划线或连字符组成.")
-        if config_subdir not in {"", ".codex"}:
-            raise StorageBoundaryError("宿主配置目录需要位于根目录或其 .codex 子目录.")
+        if config_subdir not in {"", profile.config_subdir}:
+            raise StorageBoundaryError(f"宿主配置目录需要位于根目录或其 {profile.config_subdir} 子目录.")
+        self.profile = profile
         self.user_root = Path(os.path.abspath(user_root))
         self.target_root = Path(os.path.abspath(target_root))
         self.scope_id, self.config_subdir = scope_id, config_subdir
         self.context = {"scopeId": scope_id, "targetRoot": str(self.target_root), "configSubdir": config_subdir}
         self.hook_state_root = Path(os.path.abspath(hook_state_root)) if hook_state_root is not None else None
-        self.source_names = SOURCE_NAMES + ((HOOK_STATE_NAME,) if self.hook_state_root is not None else ())
+        self.source_names = profile.source_names + ((profile.hook_state_name,) if self.hook_state_root is not None else ())
+        self.target_names = profile.target_names
         self.shared_store = None
         if self.hook_state_root is not None:
-            if scope_id == "codex-user" or self.hook_state_root == self.target_root / config_subdir:
+            if profile.is_user_scope(scope_id) or self.hook_state_root == self.target_root / config_subdir:
                 raise StorageBoundaryError("用户 Hook 状态需要作为项目配置之外的独立目标.")
             self.context["hookStateRoot"] = str(self.hook_state_root)
             self.shared_store = Store(self.user_root, lambda value: value["id"], self._validate_document,
-                                      catalog_directory=Path(".harness/hosts/codex-user"))
+                                      catalog_directory=Path(".harness/hosts") / profile.scope_id("user"))
         _check_chain(self.user_root, directory=True)
         self.store = Store(self.user_root, lambda value: value["id"], self._validate_document,
                            catalog_directory=Path(".harness/hosts") / scope_id)
@@ -87,9 +90,9 @@ class HostStorage:
     def _target(self, name: str) -> Path:
         if name not in self.source_names:
             raise StorageBoundaryError("文件名称超出宿主受管范围.")
-        if name == HOOK_STATE_NAME:
-            return self.hook_state_root / "config.toml"
-        directory = self.target_root if name in {"AGENTS.md", "AGENTS.override.md"} else self.target_root / self.config_subdir
+        if name == self.profile.hook_state_name:
+            return self.hook_state_root / self.profile.config_file
+        directory = self.target_root if name in self.profile.root_names else self.target_root / self.config_subdir
         return directory / name
 
     # //// 核对个人存档与全部宿主文件入口 [@x380kkm 2026-09-10] ////
@@ -103,7 +106,7 @@ class HostStorage:
 
     # //// 校验操作存档的作用域与固定目标集合 [@x380kkm 2026-09-10] ////
     def _validate_document(self, value: dict) -> None:
-        validate_record(value, self.context)
+        validate_record(value, self.context, self.profile)
 
     # //// 依次锁定共享用户配置与当前宿主事务 [@x380kkm 2026-09-10] ////
     @contextmanager
@@ -363,7 +366,7 @@ class HostStorage:
     # //// 为已预览的目标存档原文并提交宿主配置 [@x380kkm 2026-09-07] ////
     def apply(self, targets: dict[str, bytes | None], baseline: dict, reason: str = "apply", *, ownership: dict | None = None,
               verify_inputs: Callable[[dict], None] | None = None) -> dict:
-        if not isinstance(targets, dict) or not targets.keys() <= TARGET_NAMES.intersection(self.source_names):
+        if not isinstance(targets, dict) or not targets.keys() <= self.target_names.intersection(self.source_names):
             raise StorageValidationError("宿主应用只能写入作用域内的固定目标文件.")
         if ownership is not None and not isinstance(ownership, dict):
             raise StorageValidationError("宿主字段归属需要 JSON 对象.")

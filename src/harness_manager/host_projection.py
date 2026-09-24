@@ -19,6 +19,7 @@ from .content_plan import INSTRUCTION_POINT, PREFERENCE_POINT, SKILL_POINT, TASK
 from .declarations import index_declarations, matches_version
 from .json_codec import encode_json
 from .module_contexts import module_contexts
+from .host_profiles import CODEX, HostProfile
 from .native_rule_scope import inactive_global_rules
 from .projection import _binding_configuration, _bindings, _plugin_selection, _selection, project_content, scope_may_match
 from .sources import MAX_CONTENT_BYTES, SourceError
@@ -33,6 +34,11 @@ HOOK_EVENTS = frozenset(EVENT_KEYS)
 # //// 保存宿主编译的阻断诊断 [@x380kkm 2026-09-07] ////
 def compilation_error(diagnostics: list[dict], code: str, subject: str, message: str) -> None:
     diagnostics.append({"severity": "error", "code": code, "subject": subject, "message": message})
+
+
+# //// 保存宿主缺少载体时的跳过诊断 [@x380kkm 2026-09-24] ////
+def compilation_warning(diagnostics: list[dict], code: str, subject: str, message: str) -> None:
+    diagnostics.append({"severity": "warning", "code": code, "subject": subject, "message": message})
 
 
 # //// 判断声明范围能否由目标根文件表达 [@x380kkm 2026-09-07] ////
@@ -300,9 +306,10 @@ def check_inherited_rules(catalogs, selected: list, enabled_sources: dict, diagn
 
 
 # //// 将受管成员编译为宿主可读取的规则与配置 [@x380kkm 2026-09-07] ////
-def compile_host(catalogs, codex, reader, scope: str = "user", *, global_texts: dict[str, str] | None = None) -> dict:
+def compile_host(catalogs, codex, reader, scope: str = "user", *, global_texts: dict[str, str] | None = None,
+                 profile: HostProfile = CODEX) -> dict:
     view = catalogs.for_scope(scope)
-    context = {"user": getpass.getuser(), "host": "codex", **catalogs.context(scope)}
+    context = {"user": getpass.getuser(), "host": profile.id, **catalogs.context(scope)}
     selected, active_diagnostics = project_content(view.documents, context, layers=view.layers)
     managed, managed_diagnostics = managed_projection(view.documents, context, view.layers)
     selected.extend(module_contexts(selected))
@@ -336,7 +343,7 @@ def compile_host(catalogs, codex, reader, scope: str = "user", *, global_texts: 
                 hook = hook_group(entry)
                 if enabled:
                     hooks.setdefault(hook["event"], []).append(hook["group"])
-                target = "hooks.json"
+                target = profile.hook_file
             elif point == TASK_CONTEXT_POINT:
                 has_rules = True
                 source = adapter_subject(entry, selected, enabled_sources)
@@ -345,7 +352,7 @@ def compile_host(catalogs, codex, reader, scope: str = "user", *, global_texts: 
                     text = adapter_text(entry, source)
                     rules.append(text)
                     instructions.append({"ref": reference, "text": text, "enabled": True})
-                target = "AGENTS.override.md"
+                target = profile.rule_file
             elif point in RULE_POINTS:
                 has_rules = True
                 text = instruction_text(entry, index, reader)
@@ -355,13 +362,17 @@ def compile_host(catalogs, codex, reader, scope: str = "user", *, global_texts: 
                     instructions[-1]["fragmentTexts"] = deepcopy(entry.member["payload"]["fragmentTexts"])
                 if enabled:
                     rules.append(text)
-                target = "AGENTS.override.md"
+                target = profile.rule_file
+            elif not profile.skills_in_config:
+                compilation_warning(diagnostics, "host_capability_unsupported", reference,
+                                    "当前宿主的 Skill 由目录放置决定, 该成员未写入宿主.")
+                continue
             else:
                 skill_path = skill_entry_path(entry, index, reader)
                 if skill_path in skills and skills[skill_path] != enabled:
                     raise ContentError("host_skill_conflict", "同一 Skill 目录存在互相冲突的启用状态.")
                 skills[skill_path] = enabled
-                target = "config.toml"
+                target = profile.config_file
             contributions.append({"ref": reference, "name": entry.summary["name"], "point": point,
                                   "enabled": enabled, "target": target})
             if point == SKILL_POINT:
@@ -371,7 +382,10 @@ def compile_host(catalogs, codex, reader, scope: str = "user", *, global_texts: 
         except (ContentError, SourceError, OSError, ValueError) as error:
             compilation_error(diagnostics, getattr(error, "code", "host_source_access"), reference,
                               "成员的完整正文或本地来源无法用于宿主输出, 请确认来源授权与载体配置.")
-    if scope != "user":
+    if scope != "user" and not profile.reads_native_rules:
+        compilation_error(diagnostics, "host_scope_unsupported", profile.id,
+                          "当前宿主的项目范围需要能够读取其全局规则的适配器.")
+    elif scope != "user":
         inactive, native_diagnostics = inactive_global_rules(codex, instructions, global_texts=global_texts)
         diagnostics.extend(native_diagnostics)
         if inactive:
@@ -379,19 +393,19 @@ def compile_host(catalogs, codex, reader, scope: str = "user", *, global_texts: 
             if not instructions:
                 has_rules = False
     if has_rules:
-        targets["AGENTS.override.md"] = ("# Instructions\n\n" + "\n\n".join(rules) + "\n").encode("utf-8")
+        targets[profile.rule_file] = ("# Instructions\n\n" + "\n\n".join(rules) + "\n").encode("utf-8")
     if has_hooks:
-        targets["hooks.json"] = (encode_json({"hooks": hooks}, indent=2) + "\n").encode("utf-8")
+        targets[profile.hook_file] = (encode_json({"hooks": hooks}, indent=2) + "\n").encode("utf-8")
     if skills:
-        root = codex.root if scope == "user" else catalogs.project.workspace / ".codex"
+        root = codex.root if scope == "user" else catalogs.project.workspace / profile.config_subdir
         try:
-            targets["config.toml"] = skill_configuration(root, skills)
+            targets[profile.config_file] = skill_configuration(root, skills)
         except (ContentError, OSError, ValueError) as error:
-            compilation_error(diagnostics, getattr(error, "code", "host_config_read"), "config.toml",
+            compilation_error(diagnostics, getattr(error, "code", "host_config_read"), profile.config_file,
                               "现有宿主配置需要可保留的 TOML 结构与读取位置.")
+    diagnostics = [{"severity": "error", **item} for item in diagnostics]
     diagnostics = list({(item.get("code"), item.get("subject"), item.get("message")): item for item in diagnostics}.values())
-    diagnostics = [{**item, "severity": "error"} for item in diagnostics]
-    if diagnostics:
+    if any(item["severity"] == "error" for item in diagnostics):
         targets = {}
     result = {"targets": targets, "diagnostics": diagnostics, "contributions": contributions}
     if has_rules and not diagnostics:

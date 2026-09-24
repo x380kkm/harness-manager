@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import base64
 
+from .host_profiles import CODEX, HostProfile
 from .storage import _copy_json
 from .storage_errors import StorageBoundaryError, StorageValidationError
 
-HOOK_STATE_NAME = "hook-state.toml"
-SOURCE_NAMES = ("AGENTS.md", "AGENTS.override.md", "config.toml", "hooks.json")
-TARGET_NAMES = frozenset({"AGENTS.override.md", "config.toml", "hooks.json", HOOK_STATE_NAME})
+HOOK_STATE_NAME = CODEX.hook_state_name
+SOURCE_NAMES = CODEX.source_names
+TARGET_NAMES = CODEX.target_names
 MAX_FILE_BYTES = 4 * 1024 * 1024
 RECOVERY_STATES = frozenset({"pending", "recovery-required"})
 
@@ -60,9 +61,9 @@ def record_context(value: dict, context: dict) -> dict:
 
 
 # //// 校验操作存档的作用域与固定目标集合 [@x380kkm 2026-09-10] ////
-def validate_record(value: dict, context: dict) -> None:
+def validate_record(value: dict, context: dict, profile: HostProfile) -> None:
     required_context = record_context(value, context)
-    names = SOURCE_NAMES + ((HOOK_STATE_NAME,) if "hookStateRoot" in required_context else ())
+    names = profile.source_names + ((profile.hook_state_name,) if "hookStateRoot" in required_context else ())
     kind = value.get("kind")
     if kind == "state" and value.get("id") == "state" and type(value.get("enabled")) is bool:
         if not value.keys() <= {*required_context, "id", "kind", "enabled", "lastApplied", "ownership"}:

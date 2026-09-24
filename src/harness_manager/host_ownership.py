@@ -14,8 +14,9 @@ import tomlkit
 from tomlkit.items import Comment, Whitespace
 
 from .content_plan import SKILL_POINT
-from .host_hooks import HOOK_POINT
+from .host_hooks import HOOK_POINT, reconcile_embedded_hooks
 from .host_hook_sync import reconcile_hook_state
+from .host_profiles import CODEX, HostProfile
 from .host_storage import HOOK_STATE_NAME
 from .storage_errors import StorageConflictError, StorageValidationError
 
@@ -232,7 +233,10 @@ def release_empty_tables(document, skills, rows, record: dict) -> None:
 
 
 # //// 以当前 TOML 为底稿调和受管 Skill 字段 [@x380kkm 2026-09-07] ////
-def reconcile_skills(targets: dict, contributions: list, baseline: dict, ownership: dict, root: Path) -> None:
+def reconcile_skills(targets: dict, contributions: list, baseline: dict, ownership: dict, root: Path,
+                     profile: HostProfile = CODEX) -> None:
+    if not profile.skills_in_config:
+        return
     active = [entry for entry in contributions if entry.get("point") == SKILL_POINT]
     managed = {skill_key(entry.get("path"), root) for entry in active}
     previous = ownership.get("skills")
@@ -268,41 +272,47 @@ def reconcile_skills(targets: dict, contributions: list, baseline: dict, ownersh
 
 
 # //// 恢复或接续整份指令覆盖文件的归属 [@x380kkm 2026-09-07] ////
-def reconcile_rules(targets: dict, baseline: dict, ownership: dict) -> None:
-    previous = ownership.get(RULE_FILE)
-    if RULE_FILE not in targets and previous is None:
+def reconcile_rules(targets: dict, baseline: dict, ownership: dict, rule_file: str = RULE_FILE) -> None:
+    previous = ownership.get(rule_file)
+    if rule_file not in targets and previous is None:
         return
-    current = current_file(baseline, RULE_FILE)
+    current = current_file(baseline, rule_file)
     if previous is not None:
         if not isinstance(previous, dict) or not {"before", "last"} <= set(previous) <= {"before", "last", "source"}:
             raise StorageValidationError("指令归属需要原文与最近写入内容.")
         if current != decode_file(previous["last"]):
             raise StorageConflictError("host-instructions")
-    if RULE_FILE in targets:
+    if rule_file in targets:
         before = previous["before"] if previous is not None else encode_file(current)
-        ownership[RULE_FILE] = {"before": before, "last": encode_file(targets[RULE_FILE])}
+        ownership[rule_file] = {"before": before, "last": encode_file(targets[rule_file])}
         if previous is not None and "source" in previous:
-            ownership[RULE_FILE]["source"] = deepcopy(previous["source"])
+            ownership[rule_file]["source"] = deepcopy(previous["source"])
     else:
-        targets[RULE_FILE] = decode_file(previous["before"])
-        ownership.pop(RULE_FILE)
+        targets[rule_file] = decode_file(previous["before"])
+        ownership.pop(rule_file)
 
 
 # //// 调和当前编译输出及被撤销的宿主字段归属 [@x380kkm 2026-09-07] ////
 def reconcile(targets: dict[str, bytes], contributions: list, baselineFiles: dict,
-              ownership: dict, configRoot: Path) -> tuple[dict, dict]:
-    if (not isinstance(targets, dict) or not targets.keys() <= TARGET_FILES
+              ownership: dict, configRoot: Path, profile: HostProfile = CODEX) -> tuple[dict, dict]:
+    if (not isinstance(targets, dict) or not targets.keys() <= profile.compiled_names()
             or any(not isinstance(value, bytes) for value in targets.values())
-            or not isinstance(ownership, dict) or not ownership.keys() <= {RULE_FILE, "skills", "hooks", "hookState", "hookRequests"}
+            or not isinstance(ownership, dict) or not ownership.keys() <= {profile.rule_file, "skills", "hooks", "hookState", "hookRequests"}
             or not isinstance(contributions, list) or any(not isinstance(entry, dict) for entry in contributions)
             or not Path(configRoot).is_absolute()):
         raise StorageValidationError("宿主归属调和需要固定目标, 独立开关和绝对配置目录.")
     result, updated = dict(targets), deepcopy(ownership)
-    reconcile_rules(result, baselineFiles, updated)
-    reconcile_skills(result, contributions, baselineFiles, updated, Path(configRoot))
-    if "hooks" in updated or "hooks.json" in result or any(entry.get("point") == HOOK_POINT for entry in contributions):
-        state_name = HOOK_STATE_NAME if HOOK_STATE_NAME in baselineFiles else CONFIG_FILE
+    reconcile_rules(result, baselineFiles, updated, profile.rule_file)
+    reconcile_skills(result, contributions, baselineFiles, updated, Path(configRoot), profile)
+    hook_pending = ("hooks" in updated or profile.hook_file in result
+                    or any(entry.get("point") == HOOK_POINT for entry in contributions))
+    if profile.hook_state_name and hook_pending:
+        state_name = profile.hook_state_name if profile.hook_state_name in baselineFiles else profile.config_file
         config = result.get(state_name, current_file(baselineFiles, state_name))
-        result[state_name] = reconcile_hook_state(result, contributions, current_file(baselineFiles, "hooks.json"),
-                                                 config, updated, Path(configRoot) / "hooks.json")
+        result[state_name] = reconcile_hook_state(result, contributions, current_file(baselineFiles, profile.hook_file),
+                                                 config, updated, Path(configRoot) / profile.hook_file,
+                                                 profile.hook_file)
+    elif hook_pending:
+        reconcile_embedded_hooks(result, contributions, current_file(baselineFiles, profile.hook_file),
+                                 updated, profile.hook_file)
     return result, updated
