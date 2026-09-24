@@ -86,6 +86,17 @@ class HostProfileProjectionTests(unittest.TestCase):
         self.assertEqual(codex_result["targets"], {})
         self.assertIn(CLAUDE.rule_file, claude_result["targets"])
 
+    # //// 整份生成说明的宿主不携带原文片段映射 [@x380kkm 2026-09-24] ////
+    def test_fragment_texts_stay_with_the_override_host(self) -> None:
+        self.module["contributions"][0]["payload"]["fragmentTexts"] = ["## Naming\n\nKeep existing names.\n"]
+        codex_result = self.compile(CODEX)
+        self.assertEqual(codex_result["diagnostics"], [])
+        self.assertTrue(any("fragmentTexts" in entry for entry in codex_result["instructions"]))
+
+        claude_result = self.compile(CLAUDE)
+        self.assertEqual(claude_result["diagnostics"], [])
+        self.assertTrue(all("fragmentTexts" not in entry for entry in claude_result["instructions"]))
+
     # //// 宿主缺少 Skill 载体时跳过该成员并照常写出其余内容 [@x380kkm 2026-09-24] ////
     def test_skill_member_is_skipped_when_host_places_directories(self) -> None:
         self.module["contributions"].append(

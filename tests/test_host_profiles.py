@@ -54,6 +54,13 @@ class CodexProfileTests(unittest.TestCase):
         self.assertTrue(CODEX.hook_state_name)
         self.assertFalse(CLAUDE.hook_state_name)
 
+    # //// 受管说明与原文同名的宿主整份生成正文 [@x380kkm 2026-09-24] ////
+    def test_instruction_mode_follows_the_file_layout(self):
+        self.assertFalse(CODEX.manages_instruction_file())
+        self.assertNotEqual(CODEX.rule_file, CODEX.instruction_file)
+        self.assertTrue(CLAUDE.manages_instruction_file())
+        self.assertEqual(CLAUDE.rule_file, CLAUDE.instruction_file)
+
     # //// 未登记的宿主身份被拒绝 [@x380kkm 2026-09-24] ////
     def test_unknown_host_is_rejected(self):
         self.assertIs(host_profile(), CODEX)

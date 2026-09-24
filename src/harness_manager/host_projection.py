@@ -358,7 +358,8 @@ def compile_host(catalogs, codex, reader, scope: str = "user", *, global_texts: 
                 text = instruction_text(entry, index, reader)
                 instructions.append({"ref": reference, "text": text, "enabled": enabled,
                                      "source": deepcopy(source_record(entry.owner))})
-                if isinstance(entry.member.get("payload"), dict) and "fragmentTexts" in entry.member["payload"]:
+                if (not profile.manages_instruction_file() and isinstance(entry.member.get("payload"), dict)
+                        and "fragmentTexts" in entry.member["payload"]):
                     instructions[-1]["fragmentTexts"] = deepcopy(entry.member["payload"]["fragmentTexts"])
                 if enabled:
                     rules.append(text)

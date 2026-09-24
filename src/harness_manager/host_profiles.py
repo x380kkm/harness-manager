@@ -4,6 +4,7 @@
 
 各宿主的存档按作用域身份前缀分开保存: 身份形如 `<档案 id>-user` 或 `<档案 id>-<项目摘要>`, 目录为 `.harness/hosts/<作用域身份>`, 因此既有记录不需要迁移.
 
+`rule_file` 等于 `instruction_file` 表示受管说明就是宿主的原文说明文件, 整份正文由受管成员生成, 不按片段映射回原文.
 `hook_file` 等于 `config_file` 表示该宿主的 Hook 定义内嵌在主配置中, 写入时保留主配置的其余字段.
 `hook_state_name` 为空表示该宿主没有独立的逐处理器开关, 启停因此以写入与否表达: 未取得启用请求的事件组不写入, 主配置保持原样.
 """
@@ -42,6 +43,10 @@ class HostProfile:
     # //// 取得编译输出可写的目标集合 [@x380kkm 2026-09-24] ////
     def compiled_names(self) -> frozenset[str]:
         return self.target_names - {self.hook_state_name}
+
+    # //// 判断受管说明是否就是宿主的原文说明文件 [@x380kkm 2026-09-24] ////
+    def manages_instruction_file(self) -> bool:
+        return self.rule_file == self.instruction_file
 
     # //// 判断 Hook 定义是否内嵌在主配置文件 [@x380kkm 2026-09-24] ////
     def hooks_in_config(self) -> bool:

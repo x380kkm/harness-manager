@@ -155,8 +155,9 @@ TOPICS = {
                 "连接使用当前 Python 环境及明确的工作目录; 迁移安装后重新生成. "
                 "可在启动命令前添加 --workspace, --user-root 与重复的 --read-root. "
                 "MCP 客户端独立启动 Python 服务, 与桌面面板共享本机管理目录. 接管开关与 MCP 连接分别设置. "
-                "Claude Code 不读取该 TOML 片段, 用 claude mcp add --scope user harness-manager -- <仓库>/.venv/Scripts/python.exe -m harness_manager.cli mcp --compact 登记同一服务, "
+                "Claude Code 不读取该 TOML 片段, 用 claude mcp add --scope user harness-manager -- <仓库>/.venv/Scripts/python.exe -m harness_manager.cli --read-root <来源目录> mcp --compact 登记同一服务, "
                 "再用 claude mcp list 确认连接. "
+                "Skill 正文位于各自登记来源的目录, 读取需要 --read-root 授权; 缺少授权时 skill.list 仍返回候选, 调用 content.open 才报来源超出批准范围. "
                 "Codex MCP 接入: https://learn.chatgpt.com/docs/extend/mcp"
     },
     "errors": {

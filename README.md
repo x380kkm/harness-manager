@@ -99,10 +99,12 @@ Claude Code 使用自己的 MCP 登记方式, 不读取上面的 TOML 片段. �
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-claude mcp add --scope user harness-manager -- <仓库>/.venv/Scripts/python.exe -m harness_manager.cli mcp --compact
+claude mcp add --scope user harness-manager -- <仓库>/.venv/Scripts/python.exe -m harness_manager.cli --read-root <来源目录> mcp --compact
 ```
 
 `<仓库>` 替换为本仓库的绝对路径. 用 `claude mcp list` 确认连接状态. 包以可编辑方式安装, 该命令在任意工作目录都能启动服务.
+
+Skill 正文位于各自登记来源的目录中, 读取这些目录需要 `--read-root` 授权, 该参数可重复给出. 缺少授权时 `skill.list` 仍然返回候选, 按候选调用 `content.open` 才报来源超出批准范围; 登记多处来源时逐一给出对应目录.
 
 默认连接使用 `mcp --compact`, 提供五个入口:
 

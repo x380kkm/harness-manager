@@ -123,7 +123,8 @@ class HostControl:
             previous = storage.read_ownership().get(self.profile.rule_file)
             try:
                 name, content, inputs, configurations = self.instruction_source(scope, storage, previous)
-                rendered, source = compose_instructions(compiled["instructions"], content, storage.target_root / name,
+                base = None if self.profile.manages_instruction_file() else content
+                rendered, source = compose_instructions(compiled["instructions"], base, storage.target_root / name,
                                                         previous.get("source") if previous else None)
                 compiled["targets"][self.profile.rule_file] = rendered
                 compiled.update(instructionReads=inputs, instructionSource=source, configurationReads=configurations)
@@ -373,7 +374,7 @@ class HostRouter:
 
     # //// 固定首次使用前的宿主配置恢复点 [@x380kkm 2026-09-24] ////
     def initialize(self, scope: str = "user", host: str = CODEX.id) -> dict:
-        return self.control(host).initialize(scope)
+        return {**self.control(host).initialize(scope), "host": host}
 
     # //// 返回接管状态和可选择的恢复记录 [@x380kkm 2026-09-24] ////
     def status(self, scope: str = "user", host: str = CODEX.id) -> dict:
