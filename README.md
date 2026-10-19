@@ -35,8 +35,11 @@ harness-manager connection
 | cleanread, cleanaudit, 工具调用脚本与配套资源 | 随 Harness Manager 分发, 来源为 clean-vibing 的可分发内容 |
 | session-memory | 随 Harness Manager 分发, 记录用户请求并注入会话回顾, 两个宿主的 Hook 初始关闭 |
 | clean-writer-cn | 可选, 从 [独立仓库](https://github.com/x380kkm/clean-writer-cn) 获取 |
+| agent-handoff | 可选, 随 Harness Manager 分发跨 Agent 交接规则, 工作树与宿主路径解析, 会话摘要脚本 |
 
 仅安装选定组件时, 在 `install` 后填写名称, 管理器同时处理其必需依赖. 例如 `harness-manager toolkit install clean-writer-cn --apply`. 各组件保持独立来源; `CODEGRAPH_ROOT`, `ARCHIFY_ROOT` 和 `CLEAN_WRITER_CN_ROOT` 可指向用户已有安装.
+
+交替使用多个 Agent 时可安装 `harness-manager toolkit install agent-handoff --apply`. 它按 Git 工作树与 `CODEX_HOME`, `CLAUDE_CONFIG_DIR` 解析本机位置, 也接受明确的路径覆盖. 私人交接和会话记录保留在用户环境, Skill 本身随 Manager 更新.
 
 安装位置为所选用户目录的 `.harness/toolkit`. `rules`, `skills` 和 `tools` 保存受管副本, `sources` 保存独立 Git checkout, `managed` 保存本机安装记录. Skill 自动绑定到 `host=harness-manager`, MCP 客户端可通过 `skill_list` 发现并读取完整正文和配套资源. 安装目录的读取范围由 Manager 提供. 宿主原生 Skill 加载与规则配置使用独立的 `usage` 和 `host` 入口.
 

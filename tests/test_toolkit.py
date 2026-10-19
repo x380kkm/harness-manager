@@ -111,6 +111,24 @@ class ToolkitTests(unittest.TestCase):
         skills = {record["component"] for record in plan["targets"] if "/skills/" in record["target"].replace("\\", "/")}
         self.assertEqual(skills, {"agent-manager", "clean-tools-skill", "codegraph-skill", "archify-skill"})
 
+    def test_交接组件安装与用户目录迁移(self) -> None:
+        manager = Manager(self.project, user_root=self.user)
+        installed = manager.toolkit.install(["agent-handoff"])
+        self.assertEqual(installed["status"], "installed", installed)
+        content = self.read_skill(manager, "user", "agent-handoff")
+        relocated = self.root / "relocated-user"
+        shutil.copytree(self.user, relocated)
+        moved = Manager(self.project, user_root=relocated)
+        self.assertEqual(self.read_skill(moved, "user", "agent-handoff"), content)
+        script = relocated / ".harness/toolkit/skills/agent-handoff/scripts/resolve_paths.js"
+        result = subprocess.run(
+            ["node", str(script), "--project", str(self.project), "--codex-home", str(relocated / ".codex")],
+            capture_output=True, text=True, encoding="utf-8", check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(Path(json.loads(result.stdout)["codexSessions"]), relocated / ".codex/sessions")
+        self.assert_hosts_absent()
+
     # //// 旧选择更新时解除移除组件并保留安装目录中的个人正文 [@x380kkm 2026-10-19] ////
     def test_移除组件的旧选择更新保留个人内容(self) -> None:
         repository, manifest = self.create_source()

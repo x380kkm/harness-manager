@@ -421,6 +421,24 @@
       "dependencies": {"required": [], "optional": []}
     },
     {
+      "id": "agent-handoff",
+      "identity": {
+        "name": "Agent handoff",
+        "kind": "skill",
+        "source": {"relative": "../skills/agent-handoff"}
+      },
+      "install": {
+        "owner": "harness-manager",
+        "replaceable": true,
+        "targets": [{"root": "host", "source": "skills/agent-handoff", "path": "skills/agent-handoff"}]
+      },
+      "runtime": {"version": null},
+      "health": {"command": ["node", "scripts/resolve_paths.js"]},
+      "update": {"strategy": "bundled", "policy": "host-release", "owner": "harness-manager", "check": null, "apply": null},
+      "capabilities": ["agent-handoff", "project-path-resolution", "session-extract"],
+      "dependencies": {"required": [], "optional": []}
+    },
+    {
       "id": "clean-writer-cn",
       "identity": {
         "name": "clean-writer-cn",
