@@ -1,0 +1,1763 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://x380kkm.dev/agent-manager/manager-protocol.schema.json",
+  "title": "Agent Plugin Manager protocol",
+  "description": "Manager 管理 Plugin 内容的来源, 可见范围和部署. 宿主任务根据选择读取 Skill 内容并执行领域工作.",
+  "$comment": "语义校验器核对跨文档引用, 契约选择, provider 准入, 权限范围, 操作依赖和回执关联. 部署证据与宿主任务的内容加载证据分别记录.",
+  "oneOf": [
+    {"$ref": "#/$defs/cardCollection"},
+    {"$ref": "#/$defs/libraryCatalog"},
+    {"$ref": "#/$defs/catalogSnapshot"},
+    {"$ref": "#/$defs/pluginManifest"},
+    {"$ref": "#/$defs/pluginBinding"},
+    {"$ref": "#/$defs/pointContract"},
+    {"$ref": "#/$defs/providerRegistration"},
+    {"$ref": "#/$defs/hostObservation"},
+    {"$ref": "#/$defs/resolutionSnapshot"},
+    {"$ref": "#/$defs/resolutionPlan"},
+    {"$ref": "#/$defs/authorizationGrant"},
+    {"$ref": "#/$defs/operationReceipt"},
+    {"$ref": "#/$defs/projectionState"},
+    {"$ref": "#/$defs/semanticValidatorContract"},
+    {"$ref": "#/$defs/discoveryResult"},
+    {"$ref": "#/$defs/contentReadResult"},
+    {"$ref": "#/$defs/contentSnapshot"},
+    {"$ref": "#/$defs/contextObservation"}
+  ],
+  "$defs": {
+    "cardCollection": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "id", "metadata", "category", "nodes"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "CardCollection"},
+        "id": {"type": "string", "pattern": "^collection:[A-Za-z0-9][A-Za-z0-9._:/@#~+-]*$"},
+        "metadata": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": {"$ref": "#/$defs/nonEmptyString"},
+            "description": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
+        "category": {"enum": ["rule", "skill", "instruction", "capability", "connection", "config", "plugin", "source"]},
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/cardCollectionNode"}}
+      },
+      "additionalProperties": false
+    },
+    "cardCollectionNode": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["id", "title", "children"],
+          "properties": {
+            "id": {"$ref": "#/$defs/nonEmptyString"},
+            "title": {"$ref": "#/$defs/nonEmptyString"},
+            "context": {"type": "string"},
+            "children": {"type": "array", "items": {"$ref": "#/$defs/cardCollectionNode"}}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["id", "itemId"],
+          "properties": {
+            "id": {"$ref": "#/$defs/nonEmptyString"},
+            "itemId": {"$ref": "#/$defs/nonEmptyString"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "contentSnapshot": {
+      "type": "object",
+      "description": "内容读取固定选择身份, 生效配置输入与已采集的完整单元. 本地单元按本次实际正文分别锁定, Git 单元固定实际提交. 部署求值由 ResolutionSnapshot 承载.",
+      "required": [
+        "apiVersion",
+        "kind",
+        "id",
+        "request",
+        "selection",
+        "target",
+        "inputs",
+        "configurations",
+        "units",
+        "requiredUnits",
+        "diagnostics",
+        "createdAt"
+      ],
+      "properties": {
+        "apiVersion": {
+          "const": "manager.x380kkm/v1"
+        },
+        "kind": {
+          "const": "ContentSnapshot"
+        },
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "request": {
+          "type": "object",
+          "required": [
+            "ref",
+            "version"
+          ],
+          "properties": {
+            "ref": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "version": {
+              "$ref": "#/$defs/nonEmptyString"
+            }
+          },
+          "additionalProperties": false
+        },
+        "selection": {
+          "$ref": "#/$defs/resolvedContent"
+        },
+        "target": {
+          "$ref": "#/$defs/scopeSelector"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contentInput"
+          }
+        },
+        "configurations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contentConfiguration"
+          }
+        },
+        "units": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capturedContentUnit"
+          }
+        },
+        "requiredUnits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          }
+        },
+        "createdAt": {
+          "$ref": "#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "contentInput": {
+      "type": "object",
+      "required": [
+        "identity",
+        "document",
+        "origins"
+      ],
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "document": {
+          "$ref": "#/$defs/jsonObject"
+        },
+        "origins": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "scope",
+              "path"
+            ],
+            "properties": {
+              "scope": {
+                "enum": [
+                  "user",
+                  "project",
+                  "project-local"
+                ]
+              },
+              "path": {
+                "$ref": "#/$defs/nonEmptyString"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "contentConfiguration": {
+      "type": "object",
+      "required": [
+        "ref",
+        "version",
+        "bindingInputs",
+        "options"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "version": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "bindingInputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bindingInput"
+          }
+        },
+        "options": {
+          "$ref": "#/$defs/jsonObject"
+        }
+      },
+      "additionalProperties": false
+    },
+    "capturedContentUnit": {
+      "type": "object",
+      "required": [
+        "ref",
+        "purpose",
+        "state"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "purpose": {
+          "enum": [
+            "configuration",
+            "method",
+            "instruction",
+            "preference",
+            "task-context",
+            "reference"
+          ]
+        },
+        "state": {
+          "enum": [
+            "available",
+            "unavailable"
+          ]
+        },
+        "content": {
+          "$ref": "#/$defs/resolvedContent"
+        }
+      },
+      "additionalProperties": false
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@#~+-]*$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fingerprint": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "jsonValue": {},
+    "jsonObject": {
+      "type": "object",
+      "description": "Contract-owned JSON object. The referenced contract validates its internal fields.",
+      "additionalProperties": true
+    },
+    "integrity": {
+      "type": "object",
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": {"$ref": "#/$defs/nonEmptyString"},
+        "value": {"$ref": "#/$defs/nonEmptyString"},
+        "signer": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false
+    },
+    "contractSelector": {
+      "type": "object",
+      "required": ["id", "range"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "range": {"$ref": "#/$defs/nonEmptyString"},
+        "features": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/identifier"},
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "contractVersion": {
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "version": {"$ref": "#/$defs/nonEmptyString"},
+        "features": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/identifier"},
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "typedExtension": {
+      "type": "object",
+      "description": "扩展由自己的 contract 解释. carrier.x380kkm/required-units 的 1.x 契约通过 payload.entries 声明相对于内容入口目录的必需文件.",
+      "examples": [{"contract": {"id": "carrier.x380kkm/required-units", "range": "^1.0.0"}, "payload": {"entries": ["references/method.md"]}}],
+      "required": ["contract", "payload"],
+      "properties": {
+        "contract": {"$ref": "#/$defs/contractSelector"},
+        "payload": {"$ref": "#/$defs/jsonValue"}
+      },
+      "additionalProperties": false
+    },
+    "policyReference": {
+      "type": "object",
+      "required": ["contract"],
+      "properties": {
+        "contract": {"$ref": "#/$defs/contractSelector"},
+        "parameters": {"$ref": "#/$defs/jsonObject"}
+      },
+      "additionalProperties": false
+    },
+    "sourceLocator": {
+      "type": "object",
+      "required": ["resolver", "locator"],
+      "properties": {
+        "resolver": {"$ref": "#/$defs/contractSelector"},
+        "locator": {"$ref": "#/$defs/nonEmptyString"},
+        "constraint": {"$ref": "#/$defs/nonEmptyString"},
+        "channel": {"type": "string"},
+        "subpath": {"type": "string"},
+        "integrity": {"$ref": "#/$defs/integrity"},
+        "payload": {"$ref": "#/$defs/jsonValue"}
+      },
+      "additionalProperties": false
+    },
+    "sourceReference": {
+      "oneOf": [
+        {"type": "string", "const": "inherit"},
+        {"type": "string", "pattern": "^source:[A-Za-z0-9][A-Za-z0-9._:/@#~+-]*$"},
+        {"type": "string", "pattern": "^catalog:[A-Za-z0-9][A-Za-z0-9._:/@#~+-]*$"},
+        {"$ref": "#/$defs/sourceLocator"}
+      ]
+    },
+    "sourceBinding": {
+      "type": "object",
+      "required": ["id", "source"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "source": {"$ref": "#/$defs/sourceLocator"},
+        "role": {"$ref": "#/$defs/identifier"},
+        "extensions": {
+          "type": "array",
+          "description": "manager.source/derivation 由来源 adapter 解释. 派生关系挂在本地来源, 基线在合并提交得到确认后推进.",
+          "items": {
+            "allOf": [
+              {"$ref": "#/$defs/typedExtension"},
+              {
+                "if": {"properties": {"contract": {"properties": {"id": {"const": "manager.source/derivation"}}}}},
+                "then": {"properties": {"payload": {"$ref": "#/$defs/sourceDerivation"}}}
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "releaseIdentity": {
+      "type": "object",
+      "required": ["version"],
+      "properties": {
+        "version": {"$ref": "#/$defs/nonEmptyString"},
+        "channel": {"type": "string"},
+        "publishedAt": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "publisher": {
+      "type": "object",
+      "required": ["id", "source", "integrity"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "source": {"$ref": "#/$defs/sourceLocator"},
+        "integrity": {"$ref": "#/$defs/integrity"}
+      },
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "name": {"$ref": "#/$defs/nonEmptyString"},
+        "description": {"type": "string"},
+        "homepage": {"type": "string"},
+        "license": {"type": "string"},
+        "tags": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/nonEmptyString"},
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "diagnostic": {
+      "type": "object",
+      "required": ["code", "severity", "subject", "message"],
+      "properties": {
+        "code": {"$ref": "#/$defs/identifier"},
+        "severity": {"enum": ["info", "warning", "error"]},
+        "subject": {"$ref": "#/$defs/nonEmptyString"},
+        "message": {"$ref": "#/$defs/nonEmptyString"},
+        "evidence": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/nonEmptyString"},
+          "uniqueItems": true
+        },
+        "decision": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false
+    },
+    "lease": {
+      "type": "object",
+      "required": ["mode", "owner"],
+      "properties": {
+        "mode": {"enum": ["task", "session", "until-release"]},
+        "owner": {"$ref": "#/$defs/nonEmptyString"},
+        "expiresAt": {"$ref": "#/$defs/timestamp"},
+        "release": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"mode": {"const": "until-release"}}, "required": ["mode"]},
+          "then": {"required": ["release"]}
+        }
+      ]
+    },
+    "scopeSelector": {
+      "type": "object",
+      "description": "selector 限定投放与发现范围, current 与 Agent 标签由宿主可信连接解析为具体对象. 可比较范围按包含关系逐字段覆盖, 同层或不可比较范围的互斥值产生冲突. inherit 控制范围继承, 已读内容的传递由宿主上下文能力决定. 执行权限独立按真实宿主与工具边界求交.",
+      "required": ["contract", "selector"],
+      "properties": {
+        "contract": {"$ref": "#/$defs/contractSelector"},
+        "selector": {"$ref": "#/$defs/jsonObject"},
+        "inherit": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "condition": {
+      "type": "object",
+      "required": ["contract", "expression"],
+      "properties": {
+        "contract": {"$ref": "#/$defs/contractSelector"},
+        "expression": {"$ref": "#/$defs/jsonValue"}
+      },
+      "additionalProperties": false
+    },
+    "activationRequest": {
+      "type": "object",
+      "description": "决定管理解析中 contribution 的部署适用性. Skill 内容读取策略由对应 point 的私有 payload 表达, 并由宿主任务加载器解释.",
+      "required": ["contract", "mode"],
+      "properties": {
+        "contract": {"$ref": "#/$defs/contractSelector"},
+        "mode": {"$ref": "#/$defs/nonEmptyString"},
+        "when": {"$ref": "#/$defs/condition"},
+        "payload": {"$ref": "#/$defs/jsonValue"}
+      },
+      "additionalProperties": false
+    },
+    "criticalityPolicy": {
+      "type": "object",
+      "required": ["default"],
+      "properties": {
+        "default": {"enum": ["required", "optional"]},
+        "rules": {
+          "type": "array",
+          "description": "Rules use declaration order. The first matching rule supplies the value.",
+          "items": {
+            "type": "object",
+            "required": ["when", "value"],
+            "properties": {
+              "when": {"$ref": "#/$defs/condition"},
+              "value": {"enum": ["required", "optional"]}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "claim": {
+      "type": "object",
+      "required": ["resolver", "resource", "access", "sharing"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "resolver": {"$ref": "#/$defs/contractSelector"},
+        "resource": {"$ref": "#/$defs/nonEmptyString"},
+        "access": {
+          "type": "array",
+          "items": {"enum": ["read", "invoke", "write", "own"]},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "sharing": {"enum": ["shared", "exclusive"]},
+        "scope": {"$ref": "#/$defs/scopeSelector"},
+        "owner": {"$ref": "#/$defs/nonEmptyString"},
+        "selector": {"$ref": "#/$defs/jsonObject"}
+      },
+      "additionalProperties": false
+    },
+    "missingPolicy": {
+      "type": "object",
+      "required": ["visibility", "acquisition"],
+      "properties": {
+        "visibility": {"enum": ["hidden", "reported", "recommended"]},
+        "acquisition": {"enum": ["none", "offer", "lease", "persistent"]},
+        "source": {"$ref": "#/$defs/sourceReference"}
+      },
+      "additionalProperties": false
+    },
+    "requirement": {
+      "type": "object",
+      "required": ["id", "target", "strength", "missing"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "target": {"$ref": "#/$defs/nonEmptyString"},
+        "resolver": {"$ref": "#/$defs/contractSelector"},
+        "strength": {"enum": ["required", "optional", "advisory"]},
+        "when": {"$ref": "#/$defs/condition"},
+        "missing": {"$ref": "#/$defs/missingPolicy"}
+      },
+      "additionalProperties": false
+    },
+    "fallback": {
+      "type": "object",
+      "required": ["id", "target", "mode"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "target": {"$ref": "#/$defs/nonEmptyString"},
+        "mode": {"enum": ["equivalent", "degraded"]},
+        "when": {"$ref": "#/$defs/condition"},
+        "acceptance": {"$ref": "#/$defs/jsonObject"},
+        "acceptanceContract": {"$ref": "#/$defs/contractSelector"},
+        "payload": {"$ref": "#/$defs/jsonValue"}
+      },
+      "additionalProperties": false
+    },
+    "relation": {
+      "type": "object",
+      "description": "manager.relation/suggests 是从声明者指向候选能力或内容的单向发现元数据. 宿主按目标契约处理内容加载, 工具调用和资源复用.",
+      "required": ["id", "contract", "target"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "contract": {"$ref": "#/$defs/contractSelector"},
+        "target": {"$ref": "#/$defs/nonEmptyString"},
+        "strength": {"enum": ["required", "optional", "advisory"]},
+        "when": {"$ref": "#/$defs/condition"},
+        "scope": {"$ref": "#/$defs/scopeSelector"},
+        "payload": {"$ref": "#/$defs/jsonValue"}
+      },
+      "additionalProperties": false
+    },
+    "contribution": {
+      "description": "声明定义原始内容, 引用用本组合的局部 ID 选择既有内容. 引用保留原始内容身份, 来源版本, 适用边界和所有者; 引用的 scope 继续收窄范围, criticality 继续增加必要性. 引用链解析到声明, 循环或缺失目标产生诊断.",
+      "oneOf": [
+        {"$ref": "#/$defs/contributionDeclaration"},
+        {"$ref": "#/$defs/contributionReference"}
+      ]
+    },
+    "contributionReference": {
+      "type": "object",
+      "required": ["id", "ref"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "ref": {"$ref": "#/$defs/nonEmptyString", "description": "既有 Plugin 的 contribution 引用. 局部 ID 是组合选择别名, 原内容引用决定共享归属."},
+        "constraint": {"$ref": "#/$defs/nonEmptyString", "description": "原声明所属 Plugin 的 release 约束. 省略时使用目录选定版本, 实际版本在求值时固定."},
+        "scope": {"$ref": "#/$defs/scopeSelector"},
+        "criticality": {"$ref": "#/$defs/criticalityPolicy"}
+      },
+      "additionalProperties": false
+    },
+    "contributionDeclaration": {
+      "type": "object",
+      "description": "PointContract 补全部署控制和 point payload 的省略值. 普通 Skill 复用内容部署 point; Skill 内容保存领域知识和任务方法.",
+      "required": ["id", "point", "contract", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "point": {"$ref": "#/$defs/identifier"},
+        "contract": {"$ref": "#/$defs/contractSelector"},
+        "criticality": {"$ref": "#/$defs/criticalityPolicy"},
+        "source": {"$ref": "#/$defs/sourceReference"},
+        "scope": {"$ref": "#/$defs/scopeSelector"},
+        "activation": {"$ref": "#/$defs/activationRequest"},
+        "requirements": {"type": "array", "items": {"$ref": "#/$defs/requirement"}},
+        "claims": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+        "fallbacks": {"type": "array", "items": {"$ref": "#/$defs/fallback"}},
+        "relations": {"type": "array", "items": {"$ref": "#/$defs/relation"}},
+        "payload": {"$ref": "#/$defs/jsonValue"},
+        "extensions": {"type": "array", "items": {"$ref": "#/$defs/typedExtension"}}
+      },
+      "additionalProperties": false
+    },
+    "optionContract": {
+      "type": "object",
+      "required": ["schema"],
+      "properties": {
+        "schema": {
+          "oneOf": [
+            {"$ref": "#/$defs/nonEmptyString"},
+            {"$ref": "#/$defs/jsonObject"}
+          ]
+        },
+        "defaults": {"$ref": "#/$defs/jsonObject"},
+        "overlays": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["scope", "paths"],
+            "properties": {
+              "scope": {"$ref": "#/$defs/scopeSelector"},
+              "paths": {
+                "type": "array",
+                "items": {"$ref": "#/$defs/nonEmptyString"},
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "sensitivePaths": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/nonEmptyString"},
+          "uniqueItems": true
+        },
+        "merge": {"$ref": "#/$defs/contractSelector"},
+        "redaction": {"$ref": "#/$defs/contractSelector"},
+        "fingerprint": {"$ref": "#/$defs/contractSelector"}
+      },
+      "additionalProperties": false
+    },
+    "effect": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["read", "write", "execute", "network", "block-host", "notify"]},
+        "resource": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false
+    },
+    "entrypointImplementation": {
+      "type": "object",
+      "required": ["contract", "payload"],
+      "properties": {
+        "contract": {"$ref": "#/$defs/contractSelector"},
+        "source": {"$ref": "#/$defs/sourceReference"},
+        "payload": {"$ref": "#/$defs/jsonValue"}
+      },
+      "additionalProperties": false
+    },
+    "entrypoint": {
+      "type": "object",
+      "required": ["id", "contract", "permission", "effects", "implementation"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "contract": {"$ref": "#/$defs/contractVersion"},
+        "permission": {"$ref": "#/$defs/policyReference"},
+        "effects": {"type": "array", "items": {"$ref": "#/$defs/effect"}},
+        "scope": {"$ref": "#/$defs/scopeSelector"},
+        "requirements": {"type": "array", "items": {"$ref": "#/$defs/requirement"}},
+        "claims": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+        "implementation": {"$ref": "#/$defs/entrypointImplementation"},
+        "inputSchema": {"$ref": "#/$defs/nonEmptyString"},
+        "outputSchema": {"$ref": "#/$defs/nonEmptyString"},
+        "extensions": {"type": "array", "items": {"$ref": "#/$defs/typedExtension"}}
+      },
+      "additionalProperties": false
+    },
+    "pluginSelector": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "constraint": {"$ref": "#/$defs/nonEmptyString"},
+        "channel": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "selection": {
+      "type": "object",
+      "description": "include 与 exclude 按 contribution ID 覆写选择, 未提及 ID 继承上层结果, 根范围默认 included. require 为已选内容增加必要性并随适用范围继承. 同一 binding 的 exclude 与 include 或 require 重叠时产生冲突. 引用 contribution 使用本组合的局部 ID.",
+      "minProperties": 1,
+      "properties": {
+        "include": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/identifier"},
+          "uniqueItems": true
+        },
+        "exclude": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/identifier"},
+          "uniqueItems": true
+        },
+        "require": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/identifier"},
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "updatePolicy": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": {"enum": ["manual", "notify", "automatic"]},
+        "channels": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/nonEmptyString"},
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "acquisitionPolicy": {
+      "type": "object",
+      "required": ["temporary", "persistent"],
+      "properties": {
+        "temporary": {"enum": ["deny", "ask", "allow"]},
+        "persistent": {"enum": ["deny", "ask", "allow"]}
+      },
+      "additionalProperties": false
+    },
+    "trustAssessment": {
+      "type": "object",
+      "required": ["status", "policy", "evidence"],
+      "properties": {
+        "status": {"enum": ["trusted", "review-required", "denied"]},
+        "policy": {"$ref": "#/$defs/policyReference"},
+        "evidence": {"$ref": "#/$defs/jsonObject"}
+      },
+      "additionalProperties": false
+    },
+    "compatibilityAssessment": {
+      "type": "object",
+      "required": ["status", "evidence"],
+      "properties": {
+        "status": {"enum": ["compatible", "incompatible", "unknown"]},
+        "evidence": {"$ref": "#/$defs/jsonObject"},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+      },
+      "additionalProperties": false
+    },
+    "librarySource": {
+      "type": "object",
+      "required": ["id", "source", "enabled", "priority", "trustPolicy", "updatePolicy"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "source": {"$ref": "#/$defs/sourceLocator"},
+        "enabled": {"type": ["boolean", "null"], "description": "冲突尚未解决时为 null, 对应来源保留在 origins 与诊断中."},
+        "priority": {"type": "integer", "minimum": 0},
+        "namespaces": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/nonEmptyString"},
+          "uniqueItems": true
+        },
+        "trustPolicy": {"$ref": "#/$defs/policyReference"},
+        "updatePolicy": {"$ref": "#/$defs/updatePolicy"},
+        "extensions": {"type": "array", "items": {"$ref": "#/$defs/typedExtension"}}
+      },
+      "additionalProperties": false
+    },
+    "libraryCatalog": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "id", "libraries", "acquisitionPolicy"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "LibraryCatalog"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "libraries": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/librarySource"}
+        },
+        "acquisitionPolicy": {"$ref": "#/$defs/acquisitionPolicy"},
+        "extensions": {"type": "array", "items": {"$ref": "#/$defs/typedExtension"}}
+      },
+      "additionalProperties": false
+    },
+    "sourceObservation": {
+      "type": "object",
+      "required": ["library", "state", "trust", "observedAt", "diagnostics"],
+      "properties": {
+        "library": {"$ref": "#/$defs/identifier"},
+        "state": {"enum": ["available", "unavailable"]},
+        "revision": {"$ref": "#/$defs/nonEmptyString"},
+        "integrity": {"$ref": "#/$defs/integrity"},
+        "trust": {"$ref": "#/$defs/trustAssessment"},
+        "observedAt": {"$ref": "#/$defs/timestamp"},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "available"}}, "required": ["state"]},
+          "then": {"required": ["revision"]}
+        }
+      ]
+    },
+    "artifactLock": {
+      "type": "object",
+      "required": ["source", "revision"],
+      "properties": {
+        "source": {"$ref": "#/$defs/nonEmptyString"},
+        "revision": {"$ref": "#/$defs/nonEmptyString"},
+        "integrity": {"$ref": "#/$defs/integrity"}
+      },
+      "additionalProperties": false
+    },
+    "sourceDerivation": {
+      "type": "object",
+      "required": ["upstream"],
+      "properties": {
+        "upstream": {"$ref": "#/$defs/artifactLock", "description": "已纳入本地派生内容的上游基线. source 在当前 Plugin 的 sources 中解析, revision 固定实际比较版本."},
+        "entry": {"$ref": "#/$defs/nonEmptyString", "description": "上游比较范围限定到某个入口时使用该相对位置. 本地入口由派生来源的 contribution 声明, 跨载体自动合并需要来源 adapter 的兼容证据."}
+      },
+      "additionalProperties": false
+    },
+    "installationRecord": {
+      "type": "object",
+      "required": ["state", "artifact", "location", "owner", "dirty", "updateAuthority"],
+      "properties": {
+        "state": {"enum": ["installed", "leased", "drifted"]},
+        "artifact": {"$ref": "#/$defs/artifactLock"},
+        "location": {"$ref": "#/$defs/nonEmptyString"},
+        "owner": {"$ref": "#/$defs/identifier", "description": "共享安装资源的唯一所有者."},
+        "bindings": {"type": "array", "items": {"$ref": "#/$defs/identifier"}, "uniqueItems": true, "description": "引用此安装的 binding. 释放一个引用后, 资源按剩余引用和所有者策略保留."},
+        "dirty": {"enum": ["clean", "dirty", "unknown"]},
+        "updateAuthority": {"enum": ["manager", "provider", "external"]},
+        "lease": {"$ref": "#/$defs/lease"}
+      },
+      "additionalProperties": false
+    },
+    "catalogRelease": {
+      "type": "object",
+      "required": ["subject", "kind", "release", "library", "artifact", "availability", "trust", "compatibility"],
+      "properties": {
+        "subject": {"$ref": "#/$defs/identifier"},
+        "kind": {"$ref": "#/$defs/identifier"},
+        "release": {"$ref": "#/$defs/releaseIdentity"},
+        "library": {"$ref": "#/$defs/identifier"},
+        "artifact": {"$ref": "#/$defs/artifactLock"},
+        "availability": {"enum": ["available", "unavailable"]},
+        "trust": {"$ref": "#/$defs/trustAssessment"},
+        "compatibility": {"$ref": "#/$defs/compatibilityAssessment"},
+        "installation": {"$ref": "#/$defs/installationRecord"},
+        "metadata": {"$ref": "#/$defs/metadata"},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+      },
+      "additionalProperties": false
+    },
+    "catalogSnapshot": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "id", "catalog", "fingerprint", "observedAt", "sources", "entries"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "CatalogSnapshot"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "catalog": {"$ref": "#/$defs/identifier"},
+        "fingerprint": {"$ref": "#/$defs/fingerprint"},
+        "observedAt": {"$ref": "#/$defs/timestamp"},
+        "sources": {"type": "array", "items": {"$ref": "#/$defs/sourceObservation"}},
+        "entries": {"type": "array", "items": {"$ref": "#/$defs/catalogRelease"}},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+      },
+      "additionalProperties": false
+    },
+    "pluginManifest": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "id", "release", "contributions"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "Plugin"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "release": {"$ref": "#/$defs/releaseIdentity"},
+        "metadata": {"$ref": "#/$defs/metadata"},
+        "sources": {"type": "array", "items": {"$ref": "#/$defs/sourceBinding"}},
+        "options": {"$ref": "#/$defs/optionContract"},
+        "requirements": {"type": "array", "items": {"$ref": "#/$defs/requirement"}},
+        "contributions": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/contribution"},
+          "minItems": 1
+        },
+        "entrypoints": {"type": "array", "items": {"$ref": "#/$defs/entrypoint"}},
+        "relations": {"type": "array", "items": {"$ref": "#/$defs/relation"}},
+        "extensions": {"type": "array", "items": {"$ref": "#/$defs/typedExtension"}}
+      },
+      "additionalProperties": false
+    },
+    "pluginBinding": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "id", "plugin", "target"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "PluginBinding"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "plugin": {"$ref": "#/$defs/pluginSelector"},
+        "target": {"$ref": "#/$defs/scopeSelector"},
+        "enabled": {"type": "boolean", "description": "true 启用当前范围, false 关闭当前范围. 省略时继承上层值; 已登记根 binding 默认为 true. 恢复继承通过移除当前范围的该字段表达."},
+        "selection": {"$ref": "#/$defs/selection"},
+        "selectionBaseline": {"$ref": "#/$defs/selectionBaseline"},
+        "options": {"$ref": "#/$defs/jsonObject"},
+        "updatePolicy": {"$ref": "#/$defs/updatePolicy"},
+        "trustPolicy": {"$ref": "#/$defs/policyReference"},
+        "acquisitionPolicy": {"$ref": "#/$defs/acquisitionPolicy"},
+        "acceptedDegradedFallbacks": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/identifier"},
+          "uniqueItems": true
+        },
+        "lease": {"$ref": "#/$defs/lease"},
+        "extensions": {"type": "array", "items": {"$ref": "#/$defs/typedExtension"}}
+      },
+      "additionalProperties": false
+    },
+    "selectionBaseline": {
+      "type": "object",
+      "description": "Manager 在用户或适用策略确认后保存 release 与成员集合. 集合内的成员继续按各层显式选择继承, 集合外成员经显式选择或重新确认加入使用候选.",
+      "required": ["release", "included"],
+      "properties": {
+        "release": {"$ref": "#/$defs/releaseIdentity"},
+        "included": {"type": "array", "items": {"$ref": "#/$defs/identifier"}, "uniqueItems": true}
+      },
+      "additionalProperties": false
+    },
+    "bindingInput": {
+      "type": "object",
+      "required": ["binding", "fingerprint"],
+      "properties": {
+        "binding": {"$ref": "#/$defs/identifier"},
+        "fingerprint": {"$ref": "#/$defs/fingerprint"}
+      },
+      "additionalProperties": false
+    },
+    "effectiveBinding": {
+      "type": "object",
+      "description": "全部适用 binding 的合成结果. 每个值保留参与来源, JSON Pointer 相对于本对象. 安全策略按真实权限边界求交. options 在此保存唯一的规范化结果.",
+      "required": ["enabled", "selection", "options", "origins"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "selection": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["state", "required"],
+            "properties": {
+              "state": {"enum": ["included", "excluded", "unaccepted", "conflict"]},
+              "required": {"type": "boolean"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "options": {"$ref": "#/$defs/resolvedOptions"},
+        "updatePolicy": {"$ref": "#/$defs/updatePolicy"},
+        "trustPolicy": {"$ref": "#/$defs/policyReference"},
+        "acquisitionPolicy": {"$ref": "#/$defs/acquisitionPolicy"},
+        "acceptedDegradedFallbacks": {"type": "array", "items": {"$ref": "#/$defs/identifier"}, "uniqueItems": true},
+        "lease": {"$ref": "#/$defs/lease"},
+        "origins": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/nonEmptyString"},
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "pointOperationRequirement": {
+      "type": "object",
+      "required": ["role", "contract", "required"],
+      "properties": {
+        "role": {"$ref": "#/$defs/identifier"},
+        "contract": {"$ref": "#/$defs/contractSelector"},
+        "required": {"type": "boolean"},
+        "when": {"$ref": "#/$defs/condition"}
+      },
+      "additionalProperties": false
+    },
+    "pointContract": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "point", "contract", "publisher", "payloadSchema", "normalizedResult", "operations"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "PointContract"},
+        "point": {"$ref": "#/$defs/identifier"},
+        "contract": {"$ref": "#/$defs/contractVersion"},
+        "publisher": {"$ref": "#/$defs/publisher"},
+        "payloadSchema": {
+          "oneOf": [
+            {"$ref": "#/$defs/nonEmptyString"},
+            {"$ref": "#/$defs/jsonObject"}
+          ]
+        },
+        "defaults": {"$ref": "#/$defs/jsonObject"},
+        "normalizedResult": {"$ref": "#/$defs/contractVersion"},
+        "operations": {"type": "array", "items": {"$ref": "#/$defs/pointOperationRequirement"}},
+        "merge": {"$ref": "#/$defs/contractVersion"},
+        "claimResolvers": {"type": "array", "items": {"$ref": "#/$defs/contractVersion"}},
+        "extensions": {"type": "array", "items": {"$ref": "#/$defs/typedExtension"}}
+      },
+      "additionalProperties": false
+    },
+    "providerCapability": {
+      "type": "object",
+      "required": ["id", "contract", "entrypoint", "effectBounds", "idempotency", "transaction", "recovery"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "contract": {"$ref": "#/$defs/contractVersion"},
+        "points": {"type": "array", "items": {"$ref": "#/$defs/contractVersion"}, "minItems": 1, "uniqueItems": true, "description": "消费 contribution 的 capability 显式列出支持的 point 及精确版本. 来源获取等独立管理能力按自身契约匹配."},
+        "entrypoint": {"$ref": "#/$defs/nonEmptyString"},
+        "effectBounds": {"type": "array", "items": {"$ref": "#/$defs/effect"}},
+        "idempotency": {"enum": ["none", "keyed"]},
+        "transaction": {"enum": ["read-only", "atomic", "saga-participant", "independent"]},
+        "recovery": {"enum": ["none", "reversible", "compensating", "manual"]},
+        "payload": {"$ref": "#/$defs/jsonValue"}
+      },
+      "additionalProperties": false
+    },
+    "providerRegistration": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "id", "revision", "publisher", "source", "capabilities"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "ProviderRegistration"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "revision": {"$ref": "#/$defs/nonEmptyString"},
+        "publisher": {"$ref": "#/$defs/publisher"},
+        "source": {"$ref": "#/$defs/sourceLocator"},
+        "capabilities": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/providerCapability"},
+          "minItems": 1
+        },
+        "targets": {"type": "array", "items": {"$ref": "#/$defs/scopeSelector"}},
+        "healthContract": {"$ref": "#/$defs/contractSelector"},
+        "extensions": {"type": "array", "items": {"$ref": "#/$defs/typedExtension"}}
+      },
+      "additionalProperties": false
+    },
+    "semanticRule": {
+      "type": "object",
+      "required": ["id", "subjects", "severity", "outcome", "evidence"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "subjects": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/identifier"},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "severity": {"enum": ["info", "warning", "error"]},
+        "outcome": {"enum": ["accept", "warn", "unresolved", "block", "reject"]},
+        "evidence": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/nonEmptyString"},
+          "uniqueItems": true
+        },
+        "message": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false
+    },
+    "semanticValidatorContract": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "id", "version", "inputKinds", "rules", "diagnosticContract", "derivations"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "SemanticValidatorContract"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "version": {"$ref": "#/$defs/nonEmptyString"},
+        "inputKinds": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/identifier"},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "rules": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/semanticRule"},
+          "minItems": 1
+        },
+        "diagnosticContract": {"$ref": "#/$defs/contractVersion"},
+        "derivations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "output", "expression"],
+            "properties": {
+              "id": {"$ref": "#/$defs/identifier"},
+              "output": {"$ref": "#/$defs/identifier"},
+              "expression": {"$ref": "#/$defs/nonEmptyString"}
+            },
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "determinism": {
+          "type": "object",
+          "required": ["tieOutcome", "normalization"],
+          "properties": {
+            "tieOutcome": {"enum": ["unresolved", "reject"]},
+            "normalization": {"$ref": "#/$defs/contractSelector"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "secretHandle": {
+      "type": "object",
+      "required": ["path", "provider", "handle", "fingerprint"],
+      "properties": {
+        "path": {"$ref": "#/$defs/nonEmptyString"},
+        "provider": {"$ref": "#/$defs/identifier"},
+        "handle": {"$ref": "#/$defs/nonEmptyString"},
+        "fingerprint": {"$ref": "#/$defs/fingerprint"}
+      },
+      "additionalProperties": false
+    },
+    "resolvedOptions": {
+      "type": "object",
+      "required": ["values", "secrets", "fingerprint"],
+      "properties": {
+        "values": {"$ref": "#/$defs/jsonObject"},
+        "secrets": {"type": "array", "items": {"$ref": "#/$defs/secretHandle"}},
+        "fingerprint": {"$ref": "#/$defs/fingerprint"}
+      },
+      "additionalProperties": false
+    },
+    "providerAdmission": {
+      "type": "object",
+      "required": ["status", "policy", "allowedEffects", "evidence"],
+      "properties": {
+        "status": {"enum": ["admitted", "denied"]},
+        "policy": {"$ref": "#/$defs/policyReference"},
+        "allowedEffects": {
+          "type": "array",
+          "items": {"enum": ["read", "write", "execute", "network", "block-host", "notify"]},
+          "uniqueItems": true
+        },
+        "evidence": {"$ref": "#/$defs/jsonObject"}
+      },
+      "additionalProperties": false
+    },
+    "resolvedProvider": {
+      "type": "object",
+      "required": ["role", "id", "revision", "capability", "contract", "admission"],
+      "properties": {
+        "role": {"$ref": "#/$defs/identifier"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "revision": {"$ref": "#/$defs/nonEmptyString"},
+        "capability": {"$ref": "#/$defs/identifier"},
+        "contract": {"$ref": "#/$defs/contractVersion"},
+        "integrity": {"$ref": "#/$defs/integrity"},
+        "admission": {"$ref": "#/$defs/providerAdmission"}
+      },
+      "additionalProperties": false
+    },
+    "acquisitionCandidate": {
+      "type": "object",
+      "required": ["id", "target", "mode", "source", "trust", "compatibility"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "target": {"$ref": "#/$defs/nonEmptyString"},
+        "mode": {"enum": ["lease", "persistent"]},
+        "source": {"$ref": "#/$defs/sourceReference"},
+        "trust": {"$ref": "#/$defs/trustAssessment"},
+        "compatibility": {"$ref": "#/$defs/compatibilityAssessment"},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+      },
+      "additionalProperties": false
+    },
+    "requirementEvaluation": {
+      "type": "object",
+      "required": ["id", "target", "strength", "state", "satisfied", "diagnostics"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "target": {"$ref": "#/$defs/nonEmptyString"},
+        "strength": {"enum": ["required", "optional", "advisory"]},
+        "state": {"enum": ["satisfied", "missing", "incompatible", "denied"]},
+        "satisfied": {"type": "boolean"},
+        "selected": {"$ref": "#/$defs/nonEmptyString"},
+        "fallback": {"$ref": "#/$defs/identifier"},
+        "acquisitions": {"type": "array", "items": {"$ref": "#/$defs/acquisitionCandidate"}},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+      },
+      "additionalProperties": false
+    },
+    "relationEvaluation": {
+      "type": "object",
+      "required": ["id", "contract", "target", "state", "diagnostics"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "contract": {"$ref": "#/$defs/contractVersion"},
+        "target": {"$ref": "#/$defs/nonEmptyString"},
+        "state": {"enum": ["active", "inactive", "unresolved"]},
+        "result": {"$ref": "#/$defs/jsonValue"},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+      },
+      "additionalProperties": false
+    },
+    "hostCapability": {
+      "type": "object",
+      "required": ["status", "evidence"],
+      "properties": {
+        "status": {"enum": ["native", "adapted", "unsupported"]},
+        "adapter": {"$ref": "#/$defs/identifier"},
+        "evidence": {"$ref": "#/$defs/jsonObject"}
+      },
+      "additionalProperties": false
+    },
+    "hostCapabilityObservation": {
+      "type": "object",
+      "required": ["point", "contract", "status", "evidence"],
+      "properties": {
+        "point": {"$ref": "#/$defs/identifier"},
+        "contract": {"$ref": "#/$defs/contractVersion"},
+        "status": {"enum": ["native", "adapted", "unsupported"]},
+        "adapter": {"$ref": "#/$defs/identifier"},
+        "evidence": {"$ref": "#/$defs/jsonObject"}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "adapted"}}, "required": ["status"]},
+          "then": {"required": ["adapter"]}
+        }
+      ]
+    },
+    "hostCarrierObservation": {
+      "type": "object",
+      "required": ["resource", "state", "fingerprint"],
+      "properties": {
+        "resource": {"$ref": "#/$defs/nonEmptyString"},
+        "state": {"enum": ["managed", "unmanaged", "conflict"]},
+        "owner": {"$ref": "#/$defs/nonEmptyString"},
+        "bindings": {"type": "array", "items": {"$ref": "#/$defs/identifier"}, "uniqueItems": true},
+        "fingerprint": {"$ref": "#/$defs/fingerprint"},
+        "mergeContract": {"$ref": "#/$defs/contractVersion"}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "managed"}}, "required": ["state"]},
+          "then": {"required": ["owner"]}
+        }
+      ]
+    },
+    "hostObservation": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "id", "host", "adapter", "revision", "observedAt", "fingerprint", "capabilities", "carriers", "diagnostics"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "HostObservation"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "host": {"$ref": "#/$defs/identifier"},
+        "adapter": {"$ref": "#/$defs/identifier"},
+        "revision": {"$ref": "#/$defs/nonEmptyString"},
+        "observedAt": {"$ref": "#/$defs/timestamp"},
+        "fingerprint": {"$ref": "#/$defs/fingerprint"},
+        "capabilities": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/hostCapabilityObservation"}
+        },
+        "carriers": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/hostCarrierObservation"}
+        },
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+      },
+      "additionalProperties": false
+    },
+    "contributionResolution": {
+      "type": "object",
+      "required": ["ref", "point", "requestedContract", "evaluatedCriticality", "state", "decision", "satisfiesRequirement", "requirements", "relations", "diagnostics"],
+      "properties": {
+        "ref": {"$ref": "#/$defs/nonEmptyString"},
+        "content": {"$ref": "#/$defs/nonEmptyString", "description": "引用链末端的原始 contribution 身份. ref 保留当前组合的局部选择身份, content 决定共享内容归属, 来源 revision 由 snapshot 的 artifact locks 固定."},
+        "point": {"$ref": "#/$defs/identifier"},
+        "requestedContract": {"$ref": "#/$defs/contractSelector"},
+        "resolvedContract": {"$ref": "#/$defs/contractVersion"},
+        "normalizedFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "evaluatedCriticality": {"enum": ["required", "optional"]},
+        "state": {"enum": ["inactive", "excluded", "unresolved", "matched"]},
+        "decision": {"enum": ["selected", "fallback", "omitted", "blocked"]},
+        "satisfiesRequirement": {"type": "boolean"},
+        "providers": {"type": "array", "items": {"$ref": "#/$defs/resolvedProvider"}},
+        "hostCapability": {"$ref": "#/$defs/hostCapability"},
+        "requirements": {"type": "array", "items": {"$ref": "#/$defs/requirementEvaluation"}},
+        "relations": {"type": "array", "items": {"$ref": "#/$defs/relationEvaluation"}},
+        "claimBounds": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+        "selectedFallback": {"$ref": "#/$defs/identifier"},
+        "acquisitions": {"type": "array", "items": {"$ref": "#/$defs/acquisitionCandidate"}},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "matched"}}, "required": ["state"]},
+          "then": {"required": ["content", "resolvedContract", "normalizedFingerprint", "providers"]}
+        }
+      ]
+    },
+    "resolutionSnapshot": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "id", "catalogSnapshot", "plugin", "release", "binding", "bindingInputs", "effectiveBinding", "target", "manifestFingerprint", "registryFingerprint", "contextFingerprint", "sources", "providers", "aggregateStatus", "requirements", "relations", "contributions", "diagnostics", "createdAt", "fingerprint"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "ResolutionSnapshot"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "catalogSnapshot": {"$ref": "#/$defs/identifier"},
+        "plugin": {"$ref": "#/$defs/identifier"},
+        "release": {"$ref": "#/$defs/releaseIdentity"},
+        "binding": {"$ref": "#/$defs/identifier"},
+        "bindingInputs": {"type": "array", "items": {"$ref": "#/$defs/bindingInput"}, "minItems": 1, "description": "所有参与选择, 覆写, 默认基线与权限边界求值的 binding. 任一输入变化都参与 snapshot 陈旧判断."},
+        "effectiveBinding": {"$ref": "#/$defs/effectiveBinding"},
+        "target": {"$ref": "#/$defs/scopeSelector"},
+        "manifestFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "registryFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "contextFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "hostObservation": {"$ref": "#/$defs/identifier"},
+        "hostFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "sources": {"type": "array", "items": {"$ref": "#/$defs/artifactLock"}},
+        "providers": {"type": "array", "items": {"$ref": "#/$defs/resolvedProvider"}},
+        "aggregateStatus": {"enum": ["usable", "blocked"]},
+        "requirements": {"type": "array", "items": {"$ref": "#/$defs/requirementEvaluation"}},
+        "relations": {"type": "array", "items": {"$ref": "#/$defs/relationEvaluation"}},
+        "contributions": {"type": "array", "items": {"$ref": "#/$defs/contributionResolution"}},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}},
+        "createdAt": {"$ref": "#/$defs/timestamp"},
+        "fingerprint": {"$ref": "#/$defs/fingerprint"}
+      },
+      "additionalProperties": false
+    },
+    "authorizationRequirement": {
+      "type": "object",
+      "required": ["required"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "policy": {"$ref": "#/$defs/policyReference"},
+        "reason": {"type": "string"}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"required": {"const": true}}, "required": ["required"]},
+          "then": {"required": ["policy"]}
+        }
+      ]
+    },
+    "recoveryCapability": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": {"enum": ["none", "reversible", "compensating", "manual"]},
+        "operation": {"$ref": "#/$defs/nonEmptyString"},
+        "token": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {"enum": ["reversible", "compensating", "manual"]}
+            },
+            "required": ["mode"]
+          },
+          "then": {"required": ["operation"]}
+        }
+      ]
+    },
+    "operationProvider": {
+      "type": "object",
+      "required": ["id", "revision", "capability", "contract"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "revision": {"$ref": "#/$defs/nonEmptyString"},
+        "capability": {"$ref": "#/$defs/identifier"},
+        "contract": {"$ref": "#/$defs/contractVersion"}
+      },
+      "additionalProperties": false
+    },
+    "operationRequest": {
+      "type": "object",
+      "required": ["contract", "payload"],
+      "properties": {
+        "contract": {"$ref": "#/$defs/contractVersion"},
+        "payload": {"$ref": "#/$defs/jsonValue"}
+      },
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "description": "操作描述来源获取, 内容部署, 端点登记, 偏好投影, 项目复用资源准备和管理状态观察. 项目准备可调用分析工具生成项目所有的索引, 解析器和模型; 单次任务查询由 Agent 或 Skill 通过宿主直接调用工具.",
+      "required": ["id", "provider", "request", "dependsOn", "idempotencyKey", "beforeFingerprint", "claims", "effects", "authorization", "recovery"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "provider": {"$ref": "#/$defs/operationProvider"},
+        "request": {"$ref": "#/$defs/operationRequest"},
+        "contributions": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/nonEmptyString"},
+          "uniqueItems": true
+        },
+        "dependsOn": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/identifier"},
+          "uniqueItems": true
+        },
+        "idempotencyKey": {"$ref": "#/$defs/nonEmptyString"},
+        "beforeFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "claims": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+        "effects": {"type": "array", "items": {"$ref": "#/$defs/effect"}},
+        "expectedChanges": {"$ref": "#/$defs/jsonObject"},
+        "authorization": {"$ref": "#/$defs/authorizationRequirement"},
+        "recovery": {"$ref": "#/$defs/recoveryCapability"}
+      },
+      "additionalProperties": false
+    },
+    "permissionExpansion": {
+      "type": "object",
+      "required": ["kind", "reason", "resource", "requiresAuthorization"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/identifier"},
+        "reason": {"$ref": "#/$defs/nonEmptyString"},
+        "resource": {"$ref": "#/$defs/nonEmptyString"},
+        "before": {"$ref": "#/$defs/jsonValue"},
+        "after": {"$ref": "#/$defs/jsonValue"},
+        "requiresAuthorization": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "resolutionPlan": {
+      "type": "object",
+      "description": "来源管理计划固定 CatalogSnapshot, subject 与 provider 准入. 部署计划固定 ResolutionSnapshot. 两种计划分别使用对应输入的指纹.",
+      "required": ["apiVersion", "kind", "id", "purpose", "operations", "permissionExpansions", "executionPolicy", "reconcile", "createdAt", "fingerprint"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "ResolutionPlan"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "catalogSnapshot": {"$ref": "#/$defs/identifier"},
+        "catalogFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "subject": {"$ref": "#/$defs/identifier"},
+        "providers": {"type": "array", "items": {"$ref": "#/$defs/resolvedProvider"}, "minItems": 1},
+        "snapshot": {"$ref": "#/$defs/identifier"},
+        "snapshotFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "recoveryOf": {"$ref": "#/$defs/recoverySubject"},
+        "purpose": {
+          "type": "object",
+          "required": ["id"],
+          "properties": {
+            "id": {"$ref": "#/$defs/identifier"},
+            "payload": {"$ref": "#/$defs/jsonValue"}
+          },
+          "additionalProperties": false
+        },
+        "operations": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/operation"},
+          "minItems": 1
+        },
+        "permissionExpansions": {"type": "array", "items": {"$ref": "#/$defs/permissionExpansion"}},
+        "executionPolicy": {"$ref": "#/$defs/policyReference"},
+        "reconcile": {"enum": ["catalog", "resolution", "projection"]},
+        "createdAt": {"$ref": "#/$defs/timestamp"},
+        "fingerprint": {"$ref": "#/$defs/fingerprint"}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"purpose": {"properties": {"id": {"const": "manager.plan/recover"}}, "required": ["id"]}}, "required": ["purpose"]},
+          "then": {"required": ["recoveryOf"]}
+        }
+      ],
+      "oneOf": [
+        {
+          "required": ["catalogSnapshot", "catalogFingerprint", "subject", "providers"],
+          "not": {"anyOf": [{"required": ["snapshot"]}, {"required": ["snapshotFingerprint"]}]}
+        },
+        {
+          "required": ["snapshot", "snapshotFingerprint"],
+          "not": {"anyOf": [{"required": ["catalogSnapshot"]}, {"required": ["catalogFingerprint"]}, {"required": ["subject"]}, {"required": ["providers"]}]}
+        }
+      ]
+    },
+    "authorizationGrant": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "id", "plan", "planFingerprint", "grantFingerprint", "actor", "scope", "operations", "effects", "claims", "issuedAt"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "AuthorizationGrant"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "plan": {"$ref": "#/$defs/identifier"},
+        "planFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "grantFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "actor": {"$ref": "#/$defs/nonEmptyString"},
+        "scope": {"$ref": "#/$defs/scopeSelector"},
+        "operations": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/identifier"},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "effects": {"type": "array", "items": {"$ref": "#/$defs/effect"}},
+        "claims": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+        "policy": {"$ref": "#/$defs/policyReference"},
+        "issuedAt": {"$ref": "#/$defs/timestamp"},
+        "expiresAt": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "outputRecord": {
+      "type": "object",
+      "required": ["resource", "owner", "action", "beforeFingerprint", "afterFingerprint"],
+      "properties": {
+        "resource": {"$ref": "#/$defs/nonEmptyString"},
+        "owner": {"$ref": "#/$defs/identifier", "description": "该资源的唯一所有者."},
+        "bindings": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/nonEmptyString"},
+          "uniqueItems": true
+        },
+        "action": {"enum": ["create", "update", "remove", "register", "invoke", "observe"]},
+        "beforeFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "afterFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "provenance": {"$ref": "#/$defs/jsonObject"}
+      },
+      "additionalProperties": false
+    },
+    "operationOutcome": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {"enum": ["succeeded", "failed", "replayed"]},
+        "replayOf": {"$ref": "#/$defs/identifier"},
+        "error": {"$ref": "#/$defs/diagnostic"}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "replayed"}}, "required": ["status"]},
+          "then": {"required": ["replayOf"]}
+        },
+        {
+          "if": {"properties": {"status": {"const": "failed"}}, "required": ["status"]},
+          "then": {"required": ["error"]}
+        }
+      ]
+    },
+    "operationReceipt": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "id", "plan", "planFingerprint", "operation", "provider", "attempt", "idempotencyKey", "requestFingerprint", "outcome", "beforeObservation", "afterObservation", "claims", "effects", "outputs", "recovery", "diagnostics", "startedAt", "completedAt"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "OperationReceipt"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "plan": {"$ref": "#/$defs/identifier"},
+        "planFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "operation": {"$ref": "#/$defs/identifier"},
+        "provider": {"$ref": "#/$defs/operationProvider"},
+        "grant": {"$ref": "#/$defs/identifier"},
+        "contributions": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/nonEmptyString"},
+          "uniqueItems": true
+        },
+        "attempt": {"type": "integer", "minimum": 1},
+        "idempotencyKey": {"$ref": "#/$defs/nonEmptyString"},
+        "requestFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "outcome": {"$ref": "#/$defs/operationOutcome"},
+        "beforeObservation": {"$ref": "#/$defs/jsonObject"},
+        "afterObservation": {"$ref": "#/$defs/jsonObject"},
+        "claims": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+        "effects": {"type": "array", "items": {"$ref": "#/$defs/effect"}},
+        "outputs": {"type": "array", "items": {"$ref": "#/$defs/outputRecord"}},
+        "recovery": {"$ref": "#/$defs/recoveryCapability"},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}},
+        "startedAt": {"$ref": "#/$defs/timestamp"},
+        "completedAt": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "contributionProjection": {
+      "type": "object",
+      "required": ["ref", "evaluationState", "decision", "satisfiesRequirement", "execution", "receipts", "resources", "diagnostics"],
+      "properties": {
+        "ref": {"$ref": "#/$defs/nonEmptyString"},
+        "evaluationState": {"enum": ["inactive", "excluded", "unresolved", "matched"]},
+        "decision": {"enum": ["selected", "fallback", "omitted", "blocked"]},
+        "satisfiesRequirement": {"type": "boolean"},
+        "execution": {"enum": ["not-required", "pending", "succeeded", "failed", "recovered"]},
+        "hostCapability": {"$ref": "#/$defs/hostCapability"},
+        "receipts": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/identifier"},
+          "uniqueItems": true
+        },
+        "resources": {"type": "array", "items": {"$ref": "#/$defs/outputRecord"}},
+        "lease": {"$ref": "#/$defs/lease"},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+      },
+      "additionalProperties": false
+    },
+    "projectionState": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "id", "binding", "target", "snapshot", "snapshotFingerprint", "availability", "convergence", "contributions", "generatedAt", "fingerprint"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "ProjectionState"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "binding": {"$ref": "#/$defs/identifier"},
+        "target": {"$ref": "#/$defs/scopeSelector"},
+        "snapshot": {"$ref": "#/$defs/identifier"},
+        "snapshotFingerprint": {"$ref": "#/$defs/fingerprint"},
+        "availability": {"enum": ["usable", "blocked"]},
+        "convergence": {"enum": ["current", "pending", "drifted", "unknown"]},
+        "contributions": {"type": "array", "items": {"$ref": "#/$defs/contributionProjection"}},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}},
+        "generatedAt": {"$ref": "#/$defs/timestamp"},
+        "fingerprint": {"$ref": "#/$defs/fingerprint"}
+      },
+      "additionalProperties": false
+    },
+    "recoverySubject": {
+      "type": "object",
+      "description": "恢复从原 plan 与 operation 对应的持久执行记录及当前 provider 观察开始. receipt 在已确认时引用, token 使用 provider 的恢复能力. 观察与提交之间的并发约束由实际写入 provider 执行.",
+      "required": ["plan", "operation", "observation"],
+      "properties": {
+        "plan": {"$ref": "#/$defs/identifier"},
+        "operation": {"$ref": "#/$defs/identifier"},
+        "observation": {"$ref": "#/$defs/jsonObject"},
+        "receipt": {"$ref": "#/$defs/identifier"}
+      },
+      "additionalProperties": false
+    },
+    "resolvedContent": {
+      "type": "object",
+      "required": ["ref", "artifact", "entry"],
+      "properties": {
+        "ref": {"$ref": "#/$defs/nonEmptyString", "description": "原始内容身份, 与引用它的组合别名分开."},
+        "artifact": {"$ref": "#/$defs/artifactLock"},
+        "entry": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false
+    },
+    "discoveryCandidate": {
+      "type": "object",
+      "required": ["content", "point", "name", "description", "reason", "availability"],
+      "properties": {
+        "content": {"$ref": "#/$defs/resolvedContent"},
+        "point": {"$ref": "#/$defs/identifier"},
+        "name": {"$ref": "#/$defs/nonEmptyString"},
+        "description": {"$ref": "#/$defs/nonEmptyString"},
+        "reason": {"$ref": "#/$defs/nonEmptyString"},
+        "availability": {"enum": ["available", "requires-acquisition", "unavailable"]},
+        "snapshot": {"$ref": "#/$defs/identifier"},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+      },
+      "additionalProperties": false
+    },
+    "discoveryResult": {
+      "type": "object",
+      "description": "只读目录查询结果. 宿主可信连接限定适用对象, 硬性范围过滤先于相关性排序. continuation 继续同一次有界查询, 查询元数据维持候选状态.",
+      "required": ["apiVersion", "kind", "id", "catalogSnapshot", "target", "query", "candidates"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "DiscoveryResult"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "catalogSnapshot": {"$ref": "#/$defs/identifier"},
+        "target": {"$ref": "#/$defs/scopeSelector"},
+        "query": {"$ref": "#/$defs/nonEmptyString"},
+        "candidates": {"type": "array", "items": {"$ref": "#/$defs/discoveryCandidate"}},
+        "continuation": {"$ref": "#/$defs/nonEmptyString"},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+      },
+      "additionalProperties": false
+    },
+    "contentUnit": {
+      "type": "object",
+      "required": ["ref", "mediaType", "content"],
+      "properties": {
+        "ref": {"$ref": "#/$defs/nonEmptyString", "description": "载体契约定义的完整读取单元引用, 来源版本从当前 snapshot 解析."},
+        "mediaType": {"$ref": "#/$defs/nonEmptyString"},
+        "content": {"$ref": "#/$defs/jsonValue"}
+      },
+      "additionalProperties": false
+    },
+    "contentReadResult": {
+      "type": "object",
+      "description": "只读内容结果固定原始内容 revision 与有效 binding snapshot. 单体 SKILL.md 的完整入口默认为一个必需单元, 结构载体由 reader 给出可独立单元及所选入口的必需引用. units 保持单元完整, previous 关联相同内容版本与 snapshot 的前次读取. readiness 根据整条读取链是否提供全部 requiredUnits 判断, 仅表示内容齐备. 宿主实际接收由 ContextObservation 提供. 项目工作数据继续按资源 provider 的当前观察使用.",
+      "required": ["apiVersion", "kind", "id", "snapshot", "selection", "units", "requiredUnits", "missing", "readiness"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "ContentReadResult"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "snapshot": {"$ref": "#/$defs/identifier"},
+        "selection": {"$ref": "#/$defs/resolvedContent"},
+        "previous": {"$ref": "#/$defs/identifier"},
+        "units": {"type": "array", "items": {"$ref": "#/$defs/contentUnit"}},
+        "requiredUnits": {"type": "array", "items": {"$ref": "#/$defs/nonEmptyString"}, "minItems": 1, "uniqueItems": true},
+        "missing": {"type": "array", "items": {"$ref": "#/$defs/nonEmptyString"}, "uniqueItems": true},
+        "readiness": {"enum": ["ready", "needs-content"]},
+        "continuation": {"$ref": "#/$defs/nonEmptyString"},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"readiness": {"const": "ready"}}, "required": ["readiness"]},
+          "then": {"properties": {"missing": {"maxItems": 0}}},
+          "else": {"properties": {"missing": {"minItems": 1}}}
+        }
+      ]
+    },
+    "contextObservation": {
+      "type": "object",
+      "description": "宿主可信连接报告真实 contextRef. active-use 表示使用引用仍有效, released 表示引用已释放, unknown 表示观察不足. 历史已读内容的移除能力由宿主另给证据, 资源保留据活动方法与必要运行资源引用求值.",
+      "required": ["apiVersion", "kind", "id", "host", "contextRef", "target", "resolutions", "reads", "state", "observedAt", "evidence"],
+      "properties": {
+        "apiVersion": {"const": "manager.x380kkm/v1"},
+        "kind": {"const": "ContextObservation"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "host": {"$ref": "#/$defs/identifier"},
+        "contextRef": {"$ref": "#/$defs/nonEmptyString"},
+        "target": {"$ref": "#/$defs/scopeSelector"},
+        "resolutions": {"type": "array", "items": {"$ref": "#/$defs/identifier"}, "uniqueItems": true},
+        "reads": {"type": "array", "items": {"$ref": "#/$defs/identifier"}, "uniqueItems": true},
+        "state": {"enum": ["active-use", "released", "unknown"]},
+        "observedAt": {"$ref": "#/$defs/timestamp"},
+        "evidence": {"$ref": "#/$defs/jsonObject"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

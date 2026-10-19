@@ -1,0 +1,205 @@
+<!-- audience: internal -->
+<!-- # manager-view -->
+<!-- 界面只加载本地模块, 通过预加载接口查询和保存声明. -->
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <title>Harness Manager</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="inventory.css">
+  <script defer src="local-inventory.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <section id="startup-message" class="startup-message" role="status">
+    <h1>Harness Manager</h1>
+    <p>桌面应用读取本机 Codex 配置. 直接打开此文件时显示最近导出的只读快照.</p>
+    <p>如果此提示持续显示, 请运行 desktop 目录中的 <strong>启动管理器.ps1</strong>. 它会准备界面并打开桌面窗口.</p>
+    <p id="startup-error"></p>
+  </section>
+  <!-- //// 显示项目工具栏与内容工作区 [@x380kkm 2026-09-06] //// -->
+  <div id="shell" hidden>
+    <header class="app-header">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M5 4v16M19 4v16M5 9h14M5 15h14M12 9v6"/></svg></span><strong><span>Harness</span><span>Manager</span></strong></div>
+      <nav class="segmented" aria-label="管理区域"><button id="local-codex-button" aria-pressed="true">用户配置</button><button id="project-page-button" aria-pressed="false">项目配置</button></nav>
+      <span id="workspace-label" class="workspace-button" hidden>用户级内容</span>
+      <div class="header-actions">
+        <button id="system-settings-button" aria-pressed="false">系统设置</button>
+        <button id="refresh-button" disabled>刷新</button>
+        <button id="theme-button" aria-label="切换深浅色">深色</button>
+      </div>
+    </header>
+    <div id="host-sync-message" class="host-sync-message" role="status" hidden></div>
+    <div id="inventory-workspace" class="workspace-layout inventory-layout">
+      <aside class="sidebar" aria-label="本机内容分类">
+        <nav id="inventory-kinds"></nav>
+        <details class="inventory-scope"><summary>来源与记录</summary><p id="inventory-root"></p><p id="inventory-captured-at"></p><p id="inventory-coverage"></p><button id="inventory-statistics" class="text-button">读取记录</button></details>
+        <div class="sidebar-footer"><span class="connection-dot" aria-hidden="true"></span><span id="inventory-mode">本地读取</span></div>
+      </aside>
+      <main class="main-panel">
+        <div class="content-heading"><div><div id="inventory-scope-label" class="inventory-scope-label">用户配置</div><h1 id="inventory-page-title">内容库</h1><p id="inventory-caption" hidden></p></div><div class="button-group"><button id="inventory-change-project" hidden>更换项目</button><button id="inventory-export" class="text-button" hidden>导出快照</button></div></div>
+        <p id="inventory-scope-hint" class="inventory-scope-hint">Manager 使用设置 / 用户级默认</p>
+        <div class="content-toolbar"><input id="inventory-search" type="search" placeholder="搜索模块、内容或来源" aria-label="搜索本机内容"><div class="inventory-view-actions"><button id="inventory-new-module" class="primary">新建模块</button><button id="inventory-new-hook" class="primary" hidden>新建 Hook</button><label class="inventory-filter"><input id="inventory-show-disabled" type="checkbox">显示已关闭</label><div class="segmented" role="group" aria-label="本机内容视图"><button id="inventory-cards-button" aria-pressed="true">卡片</button><button id="inventory-list-button" aria-pressed="false">列表</button></div></div></div>
+        <details id="inventory-diagnostics" class="diagnostics" hidden><summary id="inventory-diagnostics-title"></summary><div id="inventory-diagnostics-body"></div></details>
+        <section id="inventory-list-view" class="inventory-list-view" aria-label="本机内容卡片"><div id="inventory-list"></div><p id="inventory-empty" class="inventory-empty" hidden>没有匹配的个人内容.</p></section>
+        <details id="inventory-official" class="inventory-official"><summary><span>官方与内置</span><span id="inventory-official-count"></span></summary><div id="inventory-official-list"></div></details>
+        <p id="inventory-result-count" class="inventory-result-count"></p>
+      </main>
+      <aside id="inventory-inspector" class="inspector" aria-label="本机内容详情" hidden></aside>
+    </div>
+    <div id="catalog-workspace" class="workspace-layout" hidden>
+      <aside class="sidebar" aria-label="声明分类">
+        <button id="user-catalog-button" class="catalog-scope-button" aria-pressed="true">用户级默认</button>
+        <details id="catalog-project-scopes" class="project-settings"><summary>项目配置层</summary><button id="workspace-button">选择项目目录</button><button id="project-catalog-button" class="catalog-scope-button" aria-pressed="false" disabled>项目共享设置</button><button id="project-local-catalog-button" class="catalog-scope-button" aria-pressed="false" disabled>项目个人设置</button></details>
+        <div class="sidebar-title">声明分类</div>
+        <nav id="kind-navigation"></nav>
+        <div class="sidebar-footer"><span class="connection-dot" aria-hidden="true"></span><span>本地静态声明</span></div>
+      </aside>
+      <main class="main-panel">
+        <div class="content-heading">
+          <div><h1 id="view-title">全部声明</h1><p id="catalog-caption">用户级默认内容.</p></div>
+          <div class="add-actions">
+            <button id="new-button" disabled>新建 JSON</button>
+            <select id="import-kind" aria-label="导入内容类型" disabled>
+              <option value="">自动识别</option><option value="skill">Skill</option>
+              <option value="instruction">说明</option><option value="preference">偏好</option>
+              <option value="tool">工具</option><option value="model">模型</option>
+            </select>
+            <button id="import-button" class="primary" disabled>添加来源</button>
+          </div>
+        </div>
+        <div class="content-toolbar">
+          <input id="search-input" type="search" placeholder="搜索名称, ID 或说明" aria-label="搜索声明" disabled>
+          <div class="segmented" role="group" aria-label="内容视图">
+            <button id="list-button" aria-pressed="true">列表</button>
+            <button id="graph-button" aria-pressed="false">关系图</button>
+          </div>
+        </div>
+        <div class="content-actions"><button id="usage-button" disabled>使用设置</button><button id="companion-button" disabled>配套说明</button><button id="content-button" disabled>方法内容预览</button></div>
+        <div id="catalog-diagnostics" class="diagnostics" hidden></div>
+        <section id="list-view" class="list-view" aria-label="声明列表">
+          <table><thead><tr><th>名称</th><th>种类</th><th>版本</th><th>目标</th></tr></thead><tbody id="document-list"></tbody></table>
+        </section>
+        <section id="graph-view" class="graph-view" aria-label="声明关系图" hidden>
+          <svg id="graph-canvas" role="group" aria-label="选择节点查看声明属性"></svg>
+          <div class="graph-toolbar"><span>拖动平移 / Ctrl + 滚轮缩放</span><button id="graph-locate" disabled>定位所选</button><button id="graph-out" aria-label="缩小">-</button><button id="graph-fit">适应画布</button><button id="graph-in" aria-label="放大">+</button></div>
+        </section>
+        <div id="catalog-empty" class="empty-state"><span class="empty-icon" aria-hidden="true">[]</span><h2 id="empty-title">用户级内容</h2><p id="empty-description">登记和整理 Skill, 说明及其他声明.</p><button id="empty-action" class="primary">添加来源</button></div>
+      </main>
+      <aside class="inspector" aria-label="声明属性">
+        <div id="inspector-empty" class="inspector-empty"><h2>对象属性</h2><p>选择一个声明查看内容和引用.</p></div>
+        <div id="inspector-content" hidden>
+          <div class="inspector-heading"><span class="eyebrow" id="document-kind">声明</span><h2 id="document-title"></h2><span id="dirty-label" class="dirty-label" hidden>尚未保存</span></div>
+          <dl id="document-properties" class="properties"></dl>
+          <div class="editor-heading"><label id="json-editor-label" for="json-editor">声明 JSON</label><div id="editor-tools"><button id="recover-button" class="text-button" hidden>比较最新</button><button id="schema-button" class="text-button">Schema</button><button id="format-button" class="text-button">格式化</button></div></div>
+          <textarea id="json-editor" spellcheck="false" aria-label="编辑声明 JSON" placeholder="输入完整的声明 JSON"></textarea>
+          <div id="inspector-actions" class="inspector-actions"><button id="remove-button" class="danger-text">移出登记</button><button id="preview-button" class="primary">预览变更</button></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <!-- //// /显示项目工具栏与内容工作区 //// -->
+  <div class="status-bar" role="status" aria-live="polite"><span id="status-message">正在读取用户目录.</span><span id="workspace-path"></span></div>
+  <div id="error-panel" class="error-panel" role="alert" hidden><div><strong id="error-message"></strong><button id="error-close" aria-label="关闭错误消息">关闭</button></div><details id="error-details"><summary>详细信息</summary><pre id="error-content"></pre></details></div>
+  <!-- //// 显示固定计划的变更预览 [@x380kkm 2026-09-06] //// -->
+  <dialog id="preview-dialog" class="preview-dialog">
+    <div class="dialog-heading"><div><span class="eyebrow">变更预览</span><h2 id="preview-title"></h2></div><button id="preview-close">返回编辑</button></div>
+    <p id="preview-description" class="preview-description"></p>
+    <p id="preview-effective" class="preview-description" hidden></p>
+    <div id="preview-diagnostics" class="diagnostics" hidden></div>
+    <p id="changed-fields" class="changed-fields"></p>
+    <div class="diff-columns"><section><h3>登记前</h3><pre id="before-content"></pre></section><section><h3>登记后</h3><pre id="after-content"></pre></section></div>
+    <details class="plan-details"><summary>查看完整计划</summary><pre id="plan-content"></pre></details>
+    <div class="dialog-actions"><span>保存时由管理核心核对读取基线.</span><button id="apply-button" class="primary">保存登记</button></div>
+  </dialog>
+  <!-- //// /显示固定计划的变更预览 //// -->
+  <!-- //// 比较最新登记并确认合并结果 [@x380kkm 2026-09-06] //// -->
+  <dialog id="merge-dialog" class="merge-dialog">
+    <div class="dialog-heading"><div><span class="eyebrow">保留本地编辑</span><h2 id="merge-title"></h2></div><button id="merge-close">返回编辑</button></div>
+    <p id="merge-description" class="preview-description"></p>
+    <div id="merge-error" class="diagnostics" hidden></div>
+    <details class="plan-details"><summary>查看读取时的基线</summary><pre id="merge-original"></pre></details>
+    <div class="diff-columns"><section><h3>当前磁盘内容</h3><pre id="merge-latest"></pre></section><section><h3>保留的本地编辑</h3><pre id="merge-local"></pre></section></div>
+    <div id="merge-editing"><div class="merge-result-heading"><label for="merge-result">合并结果</label><div><button id="merge-use-latest">以磁盘内容为起点</button><button id="merge-use-local">以本地编辑为起点</button></div></div>
+    <textarea id="merge-result" spellcheck="false" placeholder="明确选择一份内容作为起点, 然后编辑完整的合并结果."></textarea></div>
+    <div class="dialog-actions"><button id="merge-reload">重新读取磁盘</button><button id="merge-confirm" class="primary">确认合并并预览</button></div>
+  </dialog>
+  <!-- //// /比较最新登记并确认合并结果 //// -->
+  <!-- //// 编辑来源发布的独立使用设置 [@x380kkm 2026-09-06] //// -->
+  <dialog id="usage-dialog" class="usage-dialog">
+    <div class="dialog-heading"><div><span class="eyebrow">使用设置</span><h2 id="usage-title"></h2></div><button id="usage-close">返回</button></div>
+    <div class="settings-body">
+      <p id="usage-location" class="scope-location"></p>
+      <div id="usage-diagnostics" class="diagnostics" hidden></div>
+      <label class="field-label">本层使用设置<select id="usage-binding"></select></label>
+      <div class="settings-fields"><label class="field-label">启用方式<select id="usage-state"><option value="inherit">继承默认值</option><option value="enabled">启用</option><option value="disabled">停用</option></select></label><label class="field-label">成员接受方式<select id="usage-acceptance"><option value="keep">保留已确认集合</option><option value="current">确认本次列出的成员</option><option value="inherit">随上层选择</option></select></label></div>
+      <h3>内容选择</h3><div id="usage-members" class="usage-members"></div>
+      <label class="field-label">本层使用选项<textarea id="usage-options" rows="4" spellcheck="false"></textarea></label>
+      <details><summary>来源默认值与选项格式</summary><pre id="usage-defaults"></pre><pre id="usage-schema"></pre></details>
+      <details><summary>发布条件, 接收范围与绑定身份</summary><label class="field-label">发布版本约束, 留空恢复继承<input id="usage-version" spellcheck="false"></label><pre id="usage-release"></pre><label class="field-label">接收范围 JSON<textarea id="usage-selector" rows="3" spellcheck="false"></textarea></label><label class="field-label">绑定 ID<input id="usage-id" spellcheck="false"></label></details>
+    </div>
+    <div class="dialog-actions"><div class="button-group"><button id="usage-reload">重新读取设置</button><button id="usage-inherit" hidden>恢复继承</button><button id="usage-open-json" hidden>保留草稿并比较 JSON</button></div><button id="usage-preview" class="primary">预览设置变更</button></div>
+  </dialog>
+  <!-- //// /编辑来源发布的独立使用设置 //// -->
+  <!-- //// 展示固定快照中的完整方法内容 [@x380kkm 2026-09-06] //// -->
+  <dialog id="content-dialog" class="content-dialog">
+    <div class="dialog-heading"><div><span class="eyebrow">方法内容预览</span><h2 id="content-title"></h2></div><button id="content-close">关闭</button></div>
+    <div class="settings-body">
+      <p id="content-location" class="scope-location"></p>
+      <details><summary>任务条件与附加资源</summary><label class="field-label">预览条件 JSON<textarea id="content-context" rows="3" spellcheck="false"></textarea></label><label class="field-label">附加相对资源, 每行一项<textarea id="content-resources" rows="3" spellcheck="false"></textarea></label><button id="content-refresh">更新候选</button></details>
+      <div class="settings-fields"><label class="field-label">已启用的 Skill<select id="content-selection"></select></label><label class="field-label">正文预算 / 字节<input id="content-budget" type="number" min="1" max="1048576" value="65536"></label></div>
+      <p id="content-status" role="status" aria-live="polite"></p><div id="content-diagnostics" class="diagnostics" hidden></div>
+      <label class="field-label">已取得的完整单元<select id="content-unit"></select></label><pre id="content-body" class="content-body"></pre>
+      <details><summary>必需内容缺口</summary><pre id="content-missing"></pre></details><details><summary>固定配置与来源快照</summary><pre id="content-snapshot"></pre></details>
+    </div>
+    <div class="dialog-actions"><div class="button-group"><button id="content-usage">使用设置</button><button id="content-authorize">授权读取来源</button></div><div class="button-group"><button id="content-continue" disabled>继续读取</button><button id="content-read" class="primary" disabled>读取内容</button></div></div>
+  </dialog>
+  <!-- //// /展示固定快照中的完整方法内容 //// -->
+  <dialog id="schema-dialog" class="schema-dialog"><div class="dialog-heading"><h2>声明 Schema</h2><button id="schema-close">关闭</button></div><pre id="schema-content"></pre></dialog>
+  <!-- //// 从关系两侧编辑同一份 Adapter 文本 [@x380kkm 2026-09-07] //// -->
+  <dialog id="relations-dialog" class="relations-dialog">
+    <div class="dialog-heading"><div><span class="eyebrow">工具与依赖</span><h2 id="relations-title"></h2></div><button id="relations-close">关闭</button></div>
+    <p id="relations-scope" class="preview-description"></p><div id="relations-error" class="diagnostics" hidden></div>
+    <div class="relations-layout"><section class="relations-list-panel"><div class="segmented"><button id="relations-outgoing" aria-pressed="true">参考的工具</button><button id="relations-incoming" aria-pressed="false">被哪些工具参考</button></div>
+      <div class="relations-filter"><input id="relations-search" type="search" placeholder="搜索工具或规则" aria-label="搜索关系候选"><select id="relations-kind" aria-label="候选类型"><option value="skill">Skills</option><option value="rule">规则</option><option value="">全部</option></select></div>
+      <div id="relations-candidates"></div></section>
+      <section id="relation-editor" class="relation-editor" hidden><h3 id="relation-title"></h3><p id="relation-origin" class="scope-location"></p><label class="field-label">Adapter 文本<textarea id="relation-text" rows="9" spellcheck="false"></textarea></label><p class="scope-location">文本随来源内容加载, 参考目标按需读取.</p><div class="button-group"><button id="relation-inherit" hidden>采用用户级关系</button><button id="relation-save" class="primary">保存提示</button></div></section>
+    </div><div class="dialog-actions"><span>两侧视图共用一条有向关系.</span><button id="relations-reload">重新读取</button></div>
+  </dialog>
+  <!-- //// /从关系两侧编辑同一份 Adapter 文本 //// -->
+  <!-- //// 查看时间窗口内可观察的完整读取统计 [@x380kkm 2026-09-07] //// -->
+  <dialog id="statistics-dialog" class="statistics-dialog">
+    <div class="dialog-heading"><div><span class="eyebrow">使用统计</span><h2>Manager 完整读取</h2></div><button id="statistics-close">关闭</button></div>
+    <div class="settings-body"><div class="statistics-heading"><strong id="statistics-total"></strong><select id="statistics-days" aria-label="统计时间窗口"><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option></select></div><p id="statistics-window" class="scope-location"></p>
+      <p class="statistics-coverage">统计 Agent 经 Manager 完成的 Skill 读取, 排除面板预览和重复续读. 原生 Codex 的直接使用尚未接入采集.</p><div id="statistics-error" class="diagnostics" hidden></div>
+      <table><thead><tr><th>Skill</th><th>完整读取次数</th><th>最近读取</th></tr></thead><tbody id="statistics-skills"></tbody></table><p id="statistics-empty" class="empty-state">此时间段没有 Manager 读取记录.</p>
+    </div>
+  </dialog>
+  <!-- //// /查看时间窗口内可观察的完整读取统计 //// -->
+  <!-- //// 编辑独立配套说明并确认联合保存 [@x380kkm 2026-09-06] //// -->
+  <dialog id="companion-dialog" class="companion-dialog">
+    <div class="dialog-heading"><div><span class="eyebrow">配套说明</span><h2 id="companion-title"></h2></div><button id="companion-close">关闭</button></div>
+    <div class="settings-body">
+      <p id="companion-location" class="scope-location"></p>
+      <div id="companion-diagnostics" class="diagnostics" hidden></div>
+      <div id="companion-editing">
+        <label class="field-label">说明<select id="companion-selection"></select></label>
+        <p id="companion-origin" class="scope-location"></p>
+        <fieldset id="companion-fields">
+          <div class="settings-fields"><label class="field-label">名称<input id="companion-name" maxlength="160"></label><label class="field-label">关联 Skill<select id="companion-skill"></select></label></div>
+          <label class="field-label">配套正文<textarea id="companion-text" rows="9" spellcheck="false"></textarea></label>
+          <label class="checkbox-label"><input id="companion-enabled" type="checkbox">在适用范围启用</label>
+          <details><summary>适用范围</summary><label class="field-label">接收条件 JSON<textarea id="companion-selector" rows="3" spellcheck="false"></textarea></label></details>
+        </fieldset>
+      </div>
+      <section id="companion-comparison" hidden><h3 id="companion-plan-title"></h3><div id="companion-diffs"></div><details><summary>完整提交计划</summary><pre id="companion-plan"></pre></details></section>
+      <section id="companion-conflict" hidden><h3>当前磁盘内容</h3><pre id="companion-latest"></pre><button id="companion-rebase">采用磁盘基线并保留当前表单</button></section>
+    </div>
+    <div class="dialog-actions"><div class="button-group"><button id="companion-reload">重新读取</button><button id="companion-remove" class="danger-text" hidden>移出配套说明</button></div><div class="button-group"><button id="companion-back" hidden>返回编辑</button><button id="companion-preview" class="primary">预览变更</button><button id="companion-apply" class="primary" hidden>保存正文与设置</button></div></div>
+  </dialog>
+  <!-- //// /编辑独立配套说明并确认联合保存 //// -->
+</body>
+</html>

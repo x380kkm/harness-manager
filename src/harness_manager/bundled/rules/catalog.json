@@ -1,0 +1,13 @@
+{
+  "rules": [
+    {"id": "shell", "name": "命令与 PowerShell", "entry": "shell.md"},
+    {"id": "code-design", "name": "代码设计", "entry": "code-design.md"},
+    {"id": "comments", "name": "代码注释", "entry": "comments.md"},
+    {"id": "documentation", "name": "文档维护", "entry": "documentation.md"},
+    {"id": "code-evidence", "name": "代码检索与证据", "entry": "code-evidence.md"},
+    {"id": "components", "name": "组件与 Skill 管理", "entry": "components.md"},
+    {"id": "collaboration", "name": "子代理协作", "entry": "collaboration.md"},
+    {"id": "verification", "name": "任务执行与验证", "entry": "verification.md"},
+    {"id": "manager-access", "name": "Harness Manager 内容与配置", "entry": "manager-access.md"}
+  ]
+}

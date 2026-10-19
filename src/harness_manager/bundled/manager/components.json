@@ -1,0 +1,504 @@
+{
+  "schema": 1,
+  "components": [
+    {
+      "id": "agent-rules",
+      "identity": {"name": "Agent 通用规则", "kind": "rules", "source": {"relative": "../rules/agent-rules"}},
+      "install": {
+        "owner": "harness-manager", "replaceable": true,
+        "targets": [{"root": "host", "source": "rules", "path": "rules/agent-rules"}]
+      },
+      "runtime": {},
+      "health": {"command": ["{python}", "-c", "import json; from pathlib import Path; rules=json.loads(Path('catalog.json').read_text(encoding='utf-8'))['rules']; [Path(rule['entry']).read_text(encoding='utf-8') for rule in rules]"]},
+      "update": {"strategy": "bundled", "policy": "host-release", "owner": "harness-manager"},
+      "capabilities": ["modular-instructions", "host-rule-projection"],
+      "dependencies": {"required": [], "optional": []}
+    },
+    {
+      "id": "codegraph",
+      "identity": {
+        "name": "CodeGraph",
+        "kind": "code-provider",
+        "source": {
+          "relative": "../sources/codegraph",
+          "env": "CODEGRAPH_ROOT"
+        }
+      },
+      "install": {
+        "owner": "codegraph",
+        "replaceable": true,
+        "git": {
+          "url": "https://github.com/colbymchenry/codegraph.git"
+        },
+        "commands": [
+          [
+            "npm",
+            "ci"
+          ],
+          [
+            "npm",
+            "run",
+            "build"
+          ]
+        ]
+      },
+      "runtime": {
+        "entry": [
+          "node",
+          "dist/bin/codegraph.js"
+        ],
+        "version": [
+          "node",
+          "dist/bin/codegraph.js",
+          "version"
+        ]
+      },
+      "health": {
+        "command": [
+          "node",
+          "dist/bin/codegraph.js",
+          "version"
+        ]
+      },
+      "update": {
+        "strategy": "source-aware",
+        "policy": "automatic-capable",
+        "repository": ".",
+        "remote": "origin",
+        "branch": "main",
+        "ignored_paths": [
+          ".codegraph",
+          "cleanread"
+        ],
+        "check": [
+          "node",
+          "dist/bin/codegraph.js",
+          "upgrade",
+          "--check"
+        ],
+        "apply": {
+          "kind": "source-aware",
+          "fallback": [
+            "node",
+            "dist/bin/codegraph.js",
+            "upgrade"
+          ]
+        },
+        "activation": "next-session",
+        "timeout": 90,
+        "health_timeout": 90
+      },
+      "capabilities": [
+        "symbol-search",
+        "source-extract",
+        "call-graph",
+        "impact-analysis",
+        "mcp"
+      ],
+      "dependencies": {
+        "required": [],
+        "optional": []
+      }
+    },
+    {
+      "id": "archify",
+      "identity": {
+        "name": "Archify",
+        "kind": "structure-provider",
+        "source": {
+          "relative": "../sources/archify/archify",
+          "env": "ARCHIFY_ROOT"
+        }
+      },
+      "install": {
+        "owner": "archify",
+        "replaceable": true,
+        "git": {
+          "url": "https://github.com/tt-a1i/archify.git",
+          "subpath": "archify"
+        }
+      },
+      "runtime": {
+        "entry": [
+          "node",
+          "bin/archify.mjs"
+        ],
+        "version": [
+          "node",
+          "-p",
+          "require('./package.json').version"
+        ]
+      },
+      "health": {
+        "command": [
+          "node",
+          "bin/archify.mjs",
+          "doctor"
+        ]
+      },
+      "update": {
+        "strategy": "source-aware",
+        "policy": "automatic-capable",
+        "repository": "..",
+        "remote": "origin",
+        "branch": "main",
+        "ignored_paths": [
+          ".codegraph",
+          "cleanread"
+        ],
+        "check": [
+          "node",
+          "scripts/check-update.mjs"
+        ],
+        "apply": {
+          "kind": "source-aware"
+        },
+        "activation": "next-session",
+        "timeout": 90,
+        "health_timeout": 90
+      },
+      "capabilities": [
+        "architecture-ir",
+        "workflow-ir",
+        "sequence-ir",
+        "dataflow-ir",
+        "lifecycle-ir",
+        "validate",
+        "deliver",
+        "compare"
+      ],
+      "dependencies": {
+        "required": [],
+        "optional": []
+      }
+    },
+    {
+      "id": "clean-tools-skill",
+      "identity": {
+        "name": "clean-tools skill",
+        "kind": "skill",
+        "source": {
+          "relative": "../skills/clean-tools"
+        }
+      },
+      "install": {
+        "owner": "harness-manager",
+        "replaceable": true,
+        "targets": [
+          {
+            "root": "host",
+            "source": "skills/clean-tools",
+            "path": "skills/clean-tools"
+          },
+          {
+            "root": "host",
+            "source": "tools/cleanread",
+            "path": "tools/cleanread"
+          },
+          {
+            "root": "host",
+            "source": "tools/cleanaudit",
+            "path": "tools/cleanaudit"
+          }
+        ]
+      },
+      "runtime": {
+        "version": null
+      },
+      "health": {
+        "command": [
+          "{python}",
+          "-c",
+          "from pathlib import Path; raise SystemExit(0 if Path('SKILL.md').is_file() else 1)"
+        ]
+      },
+      "update": {
+        "strategy": "bundled",
+        "policy": "host-release",
+        "owner": "harness-manager",
+        "check": null,
+        "apply": null
+      },
+      "capabilities": [
+        "bounded-code-read",
+        "dependency-analysis",
+        "trace-memory",
+        "source-audit"
+      ],
+      "dependencies": {
+        "required": [],
+        "optional": [
+          "codegraph",
+          "archify"
+        ]
+      }
+    },
+    {
+      "id": "archify-skill",
+      "identity": {
+        "name": "Archify skill",
+        "kind": "skill",
+        "source": {
+          "relative": "../skills/archify"
+        }
+      },
+      "install": {
+        "owner": "harness-manager",
+        "replaceable": true,
+        "targets": [
+          {
+            "root": "host",
+            "source": "skills/archify",
+            "path": "skills/archify"
+          },
+          {
+            "root": "host",
+            "source": "tools/archify",
+            "path": "tools/archify"
+          }
+        ]
+      },
+      "runtime": {
+        "version": null
+      },
+      "health": {
+        "command": [
+          "{python}",
+          "-c",
+          "from pathlib import Path; required=('SKILL.md', 'references/reasoning-patterns.md', 'references/tool-contract.md'); raise SystemExit(0 if all(Path(item).is_file() for item in required) else 1)"
+        ]
+      },
+      "update": {
+        "strategy": "bundled",
+        "policy": "host-release",
+        "owner": "harness-manager",
+        "check": null,
+        "apply": null
+      },
+      "capabilities": [
+        "structured-reasoning",
+        "workflow-authoring",
+        "algorithm-observation",
+        "skill-design",
+        "human-boundary"
+      ],
+      "dependencies": {
+        "required": [
+          "archify"
+        ],
+        "optional": [
+          "codegraph",
+          "clean-tools-skill"
+        ]
+      }
+    },
+    {
+      "id": "codegraph-skill",
+      "identity": {
+        "name": "CodeGraph skill",
+        "kind": "skill",
+        "source": {
+          "relative": "../skills/codegraph"
+        }
+      },
+      "install": {
+        "owner": "harness-manager",
+        "replaceable": true,
+        "targets": [
+          {
+            "root": "host",
+            "source": "skills/codegraph",
+            "path": "skills/codegraph"
+          },
+          {
+            "root": "host",
+            "source": "tools/codegraph",
+            "path": "tools/codegraph"
+          }
+        ]
+      },
+      "runtime": {
+        "version": null
+      },
+      "health": {
+        "command": [
+          "{python}",
+          "-c",
+          "from pathlib import Path; required=('SKILL.md', 'references/tool-contract.md'); raise SystemExit(0 if all(Path(item).is_file() for item in required) else 1)"
+        ]
+      },
+      "update": {
+        "strategy": "bundled",
+        "policy": "host-release",
+        "owner": "harness-manager",
+        "check": null,
+        "apply": null
+      },
+      "capabilities": [
+        "codegraph-query",
+        "codegraph-context",
+        "codegraph-impact",
+        "codegraph-mcp"
+      ],
+      "dependencies": {
+        "required": [
+          "codegraph"
+        ],
+        "optional": [
+          "clean-tools-skill",
+          "archify"
+        ]
+      }
+    },
+    {
+      "id": "agent-manager",
+      "identity": {
+        "name": "Agent manager",
+        "kind": "manager",
+        "source": {
+          "relative": "../skills/agent-manager"
+        }
+      },
+      "install": {
+        "owner": "harness-manager",
+        "replaceable": true,
+        "targets": [
+          {
+            "root": "host",
+            "source": "skills/agent-manager",
+            "path": "skills/agent-manager"
+          }
+        ]
+      },
+      "runtime": {
+        "version": null
+      },
+      "health": {
+        "command": [
+          "{python}",
+          "-c",
+          "from pathlib import Path; raise SystemExit(0 if Path('SKILL.md').is_file() else 1)"
+        ]
+      },
+      "update": {
+        "strategy": "bundled",
+        "policy": "host-release",
+        "owner": "harness-manager",
+        "check": null,
+        "apply": null
+      },
+      "capabilities": [
+        "component-inventory",
+        "health-check",
+        "update-plan",
+        "update-orchestration",
+        "architecture-ir"
+      ],
+      "dependencies": {
+        "required": ["agent-rules"],
+        "optional": [
+          "codegraph",
+          "archify"
+        ]
+      }
+    },
+    {
+      "id": "session-memory",
+      "identity": {
+        "name": "Session memory hooks",
+        "kind": "hook",
+        "source": {"relative": "../tools/session-memory"}
+      },
+      "install": {
+        "owner": "harness-manager",
+        "replaceable": true,
+        "targets": [{"root": "host", "source": "tools/session-memory", "path": "tools/session-memory"}]
+      },
+      "runtime": {"version": null},
+      "health": {"command": ["node", "--check", "session-memory.mjs"]},
+      "update": {"strategy": "bundled", "policy": "host-release", "owner": "harness-manager", "check": null, "apply": null},
+      "capabilities": ["request-recording", "conversation-recap"],
+      "dependencies": {"required": [], "optional": []}
+    },
+    {
+      "id": "clean-writer-cn",
+      "identity": {
+        "name": "clean-writer-cn",
+        "kind": "skill",
+        "source": {
+          "relative": "../sources/clean-writer-cn",
+          "env": "CLEAN_WRITER_CN_ROOT"
+        }
+      },
+      "install": {
+        "owner": "clean-writer-cn",
+        "replaceable": true,
+        "targets": [
+          {
+            "root": "host",
+            "source_root": "component",
+            "source": ".",
+            "path": "skills/clean-writer-cn"
+          }
+        ],
+        "git": {
+          "url": "https://github.com/x380kkm/clean-writer-cn.git"
+        }
+      },
+      "runtime": {
+        "version": [
+          "git",
+          "rev-parse",
+          "--short",
+          "HEAD"
+        ]
+      },
+      "health": {
+        "command": [
+          "{python}",
+          "-c",
+          "from pathlib import Path; required=('SKILL.md', 'modules/composition.md', 'modules/structure.md', 'modules/language.md', 'modules/format.md'); raise SystemExit(0 if all(Path(item).is_file() for item in required) else 1)"
+        ]
+      },
+      "update": {
+        "strategy": "source-aware",
+        "policy": "automatic-capable",
+        "repository": ".",
+        "remote": "origin",
+        "branch": "main",
+        "ignored_paths": [
+          ".codegraph",
+          "cleanread"
+        ],
+        "check": null,
+        "apply": {
+          "kind": "source-aware"
+        },
+        "activation": "next-session",
+        "timeout": 90,
+        "health_timeout": 90
+      },
+      "capabilities": [
+        "chinese-composition",
+        "technical-writing",
+        "fact-to-prose",
+        "structure-to-prose"
+      ],
+      "dependencies": {
+        "required": [],
+        "optional": [
+          "clean-tools-skill",
+          "codegraph-skill",
+          "archify-skill"
+        ]
+      }
+    }
+  ],
+  "defaults": [
+    "agent-manager",
+    "clean-tools-skill",
+    "codegraph-skill",
+    "archify-skill",
+    "session-memory"
+  ]
+}
