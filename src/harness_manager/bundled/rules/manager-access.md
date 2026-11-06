@@ -2,8 +2,8 @@
 
 连接 Harness Manager 或配置其工具包时应用本节.
 
-- 首次连接通过 `agent_help` 读取 `overview`, 具体方法通过 `agent_capabilities` 查询输入与副作用.
-- 发现 Skill 使用 `manager_query` 的 `catalog.discover`, `context.host` 为 `harness-manager`, `point` 为 `skill.x380kkm/deployment`, 按用户或项目选择 `scope`. 按返回的 `read.method` 和 `read.params` 读取正文, 遇到 `needs-content` 沿 `continuation` 读取到完整.
+- 需要 Skill 时调用 `skill_list`, 按返回的 `read` 经 `manager_action` 调用 `content.open` 读取全文, 遇到 `needs-content` 沿 `continuation` 读完.
+- 规则, 组件或宿主配置相关工作先用 `agent_help` 读取 `overview`, 再用 `agent_capabilities` 查询具体方法的输入与副作用.
 - 核对规则使用实际宿主的 `context.host` 和 `point=context.x380kkm/instruction`. 规则选择, 来源和宿主投放通过 Manager 的模块与绑定管理.
 - 同一范围和版本复用已经取得的候选, 方法 schema 和完整正文, 普通查询只返回任务需要的字段.
 - 用户要求安装或配置时, 读取 agent-manager Skill, 检查已有选择并按授权预览和应用. 未配置项采用默认规则, 模型与推理选项沿用宿主设置, Hooks 初始关闭. 已有规则选择, 执行偏好与 Hooks 状态沿用用户选择.

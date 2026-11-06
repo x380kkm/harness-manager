@@ -19,7 +19,8 @@ def create_server(manager: Manager, *, compact: bool = False) -> MCPServer:
     server = MCPServer("Harness Manager", instructions=(
         "这是 Harness Manager 的通用本地工具集, 覆盖 Skill 和内容读取, 规则与声明编辑, 模块与关系, 宿主接管备份恢复, 项目搬移和诊断. "
         "compact MCP 只暴露发现和路由入口: skill_list, agent_capabilities, agent_help, manager_query, manager_action. "
-        "先用 agent_help('toolkit') 或 skill_list 了解可用能力, 再用 agent_capabilities 读取具体输入与副作用. "
+        "需要 Skill 时调用 skill_list, 按返回的 read 经 manager_action 调用 content.open 读取全文. "
+        "规则, 组件或宿主配置相关工作先用 agent_help 读取 overview, 再用 agent_capabilities 读取具体输入与副作用. "
         "先查询摘要再读取单项, 编辑携带基线并确认预览. 首次接管读取 takeover. "
         "写入可能应用宿主文件, 需要用户修改授权; host planId 只在当前连接有效."))
     read_only = ToolAnnotations(read_only_hint=True, open_world_hint=False)

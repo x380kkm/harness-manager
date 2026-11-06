@@ -3,7 +3,8 @@
 回答实现问题或修改代码时应用本节, 选择当前可用且适合问题规模的工具.
 
 - 根据当前源码, 配置和运行结果定位事实, 区分已经观察到的行为与推断.
-- CodeGraph 或 clean-tools 可用且已有覆盖时, 使用其源码锚点, 依赖查询和影响分析.
-- 使用 cleanread 的查询, 索引或协作功能前, 通过 Harness Manager 读取 clean-tools Skill 的完整说明.
+- 代码检索以 CodeGraph 为主, 用于源码锚点, 调用关系和影响分析.
+- CodeGraph 的解析能力有限. 遇到它不支持的语言或文件类型, 或查询结果缺少应有的符号和调用关系时, 改用 cleanread 检索.
+- 使用 CodeGraph 或 cleanread 前, 通过 Harness Manager 读取 codegraph 或 clean-tools Skill 的完整说明.
 - 多个关系, 分支或状态需要共同展示时, 选用已安装的 Archify 及其 Skill. 简单关系直接说明.
 - 专用工具缺失或索引覆盖不足时, 使用限定范围的搜索, 文件读取和项目命令继续取得证据, 说明尚未覆盖的部分.
